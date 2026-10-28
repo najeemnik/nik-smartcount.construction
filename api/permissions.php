@@ -59,3 +59,21 @@ function requireScopedProject(array $user, string $module, ?string $projectId): 
     }
     assertModulePermission($user, $module, 'view', $projectId);
 }
+
+/** Scope-only check for private draft records; no client-supplied form/module can expand access. */
+function canAccessProject(array $user, ?string $projectId): bool {
+    if(!hasProjectRestrictions($user))return true;
+    if($projectId===null || $projectId==='')return false;
+    $profile=permissionData($user['app_profile_json']??[]);
+    $assigned=$profile['assignedProjectIds']??[];
+    if(!is_array($assigned))return false;
+    if($assigned&&!in_array('*',$assigned,true)&&!in_array($projectId,$assigned,true))return false;
+    $grants=$profile['projectGrants']??[];
+    if(!is_array($grants))return false;
+    if(!$grants)return true;
+    foreach($grants as $grant){
+        if(!is_array($grant)||!in_array((string)($grant['projectId']??''),['*',$projectId],true))continue;
+        foreach(($grant['sections']??[]) as $section)if(is_array($section)&&!empty($section['view']))return true;
+    }
+    return false;
+}

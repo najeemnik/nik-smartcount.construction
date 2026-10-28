@@ -67,7 +67,7 @@ if ($method === 'GET') {
     $sql = "SELECT s.*, p.name AS project_name
             FROM subcontractors s
             LEFT JOIN projects p ON s.project_id = p.id
-            WHERE (s.tenant_id = :tid OR p.tenant_id = :tid2)";
+            WHERE s.tenant_id = :tid AND (s.project_id IS NULL OR p.tenant_id = :tid2)";
     $params = [':tid' => $tenantId, ':tid2' => $tenantId];
 
     if ($projectId) {
@@ -201,7 +201,7 @@ if ($method === 'PUT') {
     $body = getJsonBody();
     $id = $body['id'] ?? '';
 
-    $oldStmt = $pdo->prepare("SELECT * FROM subcontractors WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)");
+    $oldStmt = $pdo->prepare("SELECT * FROM subcontractors WHERE id = :id AND tenant_id = :tid");
     $oldStmt->execute([':id' => $id, ':tid' => $tenantId]);
     $old = $oldStmt->fetch();
     if (!$old) {
@@ -286,7 +286,7 @@ if ($method === 'PUT') {
             rate_history_json = :rhist,
             status = :st,
             tenant_id = :tid
-        WHERE id = :id AND (tenant_id = :tid2 OR tenant_id IS NULL)
+        WHERE id = :id AND tenant_id = :tid2
     ");
     $stmt->execute([
         ':id'        => $id,
@@ -332,7 +332,7 @@ if ($method === 'PUT') {
 if ($method === 'DELETE') {
     requireRole($user, ['master', 'admin']);
     $id = $_GET['id'] ?? '';
-    $oldStmt = $pdo->prepare("SELECT * FROM subcontractors WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)");
+    $oldStmt = $pdo->prepare("SELECT * FROM subcontractors WHERE id = :id AND tenant_id = :tid");
     $oldStmt->execute([':id' => $id, ':tid' => $tenantId]);
     $old = $oldStmt->fetch();
     if (!$old) {
@@ -343,7 +343,7 @@ if ($method === 'DELETE') {
     }
     assertModulePermission($user, 'contractors', 'del', !empty($old['project_id']) ? (string)$old['project_id'] : null);
 
-    $stmt = $pdo->prepare("DELETE FROM subcontractors WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)");
+    $stmt = $pdo->prepare("DELETE FROM subcontractors WHERE id = :id AND tenant_id = :tid");
     $stmt->execute([':id' => $id, ':tid' => $tenantId]);
     jsonResponse(['success' => true]);
 }

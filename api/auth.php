@@ -477,6 +477,7 @@ if ($method === 'POST') {
         }
 
         if ($existing) {
+            $sessionContextChanged=(string)$row['owner']!==(string)($existing['owner_admin_id']??'') || $row['role']!==$existing['role'];
             $sql = 'UPDATE users SET owner_admin_id = :owner, name = :n, username = :u, email = :e,
                     password_hash = :h, role = :r, phone = :ph, company_name = :c, company_address = :a,
                     subscription_plan = :pl, subscription_expires_at = :ex, is_locked = :l,
@@ -485,7 +486,7 @@ if ($method === 'POST') {
                 . ($schemaFlags['hasAiEnabled'] ? ', ai_enabled = :ai' : '')
                 . ($schemaFlags['hasHashSalt'] ? ', hash_salt = :sa' : '')
                 . ($schemaFlags['hasAppProfile'] ? ', app_profile_json = :pr' : '')
-                . ($passwordChanged ? ', token_version = token_version + 1' : '')
+                . (($passwordChanged || $sessionContextChanged) ? ', token_version = token_version + 1' : '')
                 . ' WHERE id = :id';
             $s = $db->prepare($sql);
             $args = [

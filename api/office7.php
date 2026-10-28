@@ -174,6 +174,7 @@ if ($method === 'GET') {
         }
         $tenantId = currentTenantId($currentUser);
         $projectId = trim((string)($_GET['project_id'] ?? ''));
+        if($projectId!==''&&!canAccessProject($currentUser,$projectId))jsonResponse(false,null,'صلاحیت پروژهٔ پیش‌نویس را ندارید.',403);
         $sql = "SELECT * FROM form_drafts WHERE user_id = :uid AND tenant_id = :tid";
         $params = ['uid' => $currentUser['id'], 'tid' => $tenantId];
         if ($projectId !== '') {
@@ -185,6 +186,7 @@ if ($method === 'GET') {
         $stmt->execute($params);
         $drafts = [];
         foreach ($stmt->fetchAll() as $d) {
+            if(!canAccessProject($currentUser,$d['project_id']?:null))continue;
             $drafts[] = [
                 'id' => $d['id'],
                 'draftKey' => $d['client_draft_key'] ?? preg_replace('/^scoped:[a-f0-9]{64}:/', '', $d['draft_key']),
@@ -308,8 +310,15 @@ if ($method === 'POST') {
             $ownerCheck->execute(['id'=>$ownerId,'role'=>'admin']);
             if($ownerId===$userId||!$ownerCheck->fetch())jsonResponse(false,null,'مالک شرکت معتبر نیست.',400);
         }
-        $plainPassword=(string)($input['newPassword']??$input['password']??'');
-        if($plainPassword!=='' && substr($plainPassword,0,7)!=='sha256$' && strlen($plainPassword)<12)jsonResponse(false,null,'رمز حداقل ۱۲ حرف باشد.',400);
+        $passwordInputs=[];
+        foreach(['newPassword','password','passwordHash'] as $key){
+            if(!array_key_exists($key,$input))continue;
+            if(!is_string($input[$key]))jsonResponse(false,null,'رمز معتبر نیست.',400);
+            if($input[$key]!=='')$passwordInputs[]=$input[$key];
+        }
+        if(count(array_unique($passwordInputs))>1)jsonResponse(false,null,'مقادیر متفاوت برای رمز ارسال شده است.',400);
+        $rawOrHashedPwd=$passwordInputs[0]??'';
+        if($rawOrHashedPwd!=='' && substr($rawOrHashedPwd,0,7)!=='sha256$' && strlen($rawOrHashedPwd)<12)jsonResponse(false,null,'رمز حداقل ۱۲ حرف باشد.',400);
 
         $fields = [];
         $params = ['id' => $userId];
@@ -364,7 +373,6 @@ if ($method === 'POST') {
         }
 
         // پشتیبانی امن از تغییر یا بازنشانی رمز عبور (هم sha256$ و هم رمز خام)
-        $rawOrHashedPwd = trim((string)($input['password'] ?? ($input['newPassword'] ?? ($input['passwordHash'] ?? ''))));
         if ($rawOrHashedPwd !== '') {
             $saltForPwd = $nextUsername !== '' ? $nextUsername : strtolower(trim((string)$target['username']));
             if (substr($rawOrHashedPwd, 0, 7) === 'sha256$') {
@@ -456,6 +464,10 @@ if ($method === 'POST') {
             $params['aprof'] = json_encode($mergedProfile, JSON_UNESCAPED_UNICODE);
         }
 
+        $contextChanged=(array_key_exists('owner',$params) && (string)$params['owner']!==(string)($target['owner_admin_id']??''))
+            || (isset($params['role']) && $params['role']!==$target['role']);
+        if($contextChanged && $rawOrHashedPwd==='')$fields[]='token_version = token_version + 1';
+
         if (empty($fields)) {
             jsonResponse(false, null, 'داده‌ای برای به‌روزرسانی ارسال نشده است.', 400);
         }
@@ -477,6 +489,7 @@ if ($method === 'POST') {
 
     // ۲. تغییر وضعیت قفل (Lock/Unlock)
     if ($action === 'toggle_lock') {
+        if(!$isMasterAuthorized)assertModulePermission($currentUser,'users','edit');
         $userId = trim((string)($input['userId'] ?? ($input['id'] ?? '')));
         $lockStatus = !empty($input['isLocked']) || !empty($input['isLockedBySuperAdmin']) ? 1 : 0;
 
@@ -521,7 +534,10 @@ if ($method === 'POST') {
         $formType = preg_replace('/[^a-zA-Z0-9_\-]/', '', (string)($input['formType'] ?? 'general'));
         $projectId = trim((string)($input['projectId'] ?? ''));
         $draftKey = trim((string)($input['draftKey'] ?? ($currentUser['id'] . '::' . $projectId . '::' . $formType)));
-        if ($projectId !== '') { assertTenantProjectAccess($db, $projectId, $tenantId); }
+        if ($projectId !== '') {
+            assertTenantProjectAccess($db,$projectId,$tenantId);
+            if(!canAccessProject($currentUser,$projectId))jsonResponse(false,null,'صلاحیت پروژهٔ پیش‌نویس را ندارید.',403);
+        } elseif(hasProjectRestrictions($currentUser))jsonResponse(false,null,'پروژهٔ پیش‌نویس الزامی است.',403);
         if (strlen($draftKey) > 255) { jsonResponse(false, null, 'کلید پیش‌نویس بیش از حد طولانی است.', 400); }
         $visibleDraftKey = $draftKey;
         $draftKey = 'scoped:' . hash('sha256', $tenantId . ':' . $currentUser['id'] . ':' . $draftKey);
@@ -574,13 +590,19 @@ if ($method === 'POST') {
         $formType = trim((string)($input['formType'] ?? ''));
         $projectId = trim((string)($input['projectId'] ?? ''));
 
+        if($projectId!==''&&!canAccessProject($currentUser,$projectId))jsonResponse(false,null,'صلاحیت پروژهٔ پیش‌نویس را ندارید.',403);
+        if($draftKey===''&&$projectId===''&&hasProjectRestrictions($currentUser))jsonResponse(false,null,'پروژهٔ پیش‌نویس الزامی است.',403);
+
         if ($draftKey !== '') {
             $draftKey = 'scoped:' . hash('sha256', currentTenantId($currentUser) . ':' . $currentUser['id'] . ':' . $draftKey);
-            $stmt = $db->prepare("DELETE FROM form_drafts WHERE user_id = :uid AND draft_key = :dk");
-            $stmt->execute(['uid' => $currentUser['id'], 'dk' => $draftKey]);
+            $scope=$db->prepare('SELECT project_id FROM form_drafts WHERE user_id=:uid AND draft_key=:dk');
+            $scope->execute(['uid'=>$currentUser['id'],'dk'=>$draftKey]);$draft=$scope->fetch();
+            if($draft&&!canAccessProject($currentUser,$draft['project_id']?:null))jsonResponse(false,null,'صلاحیت پروژهٔ پیش‌نویس را ندارید.',403);
+            $stmt = $db->prepare("DELETE FROM form_drafts WHERE user_id = :uid AND tenant_id=:tid AND draft_key = :dk");
+            $stmt->execute(['uid' => $currentUser['id'], 'tid'=>currentTenantId($currentUser), 'dk' => $draftKey]);
         } elseif ($formType !== '') {
-            $stmt = $db->prepare("DELETE FROM form_drafts WHERE user_id = :uid AND form_type = :ft AND (project_id = :pid OR :pid2 = '')");
-            $stmt->execute(['uid' => $currentUser['id'], 'ft' => $formType, 'pid' => $projectId, 'pid2' => $projectId]);
+            $stmt = $db->prepare("DELETE FROM form_drafts WHERE user_id = :uid AND tenant_id=:tid AND form_type = :ft AND (project_id = :pid OR :pid2 = '')");
+            $stmt->execute(['uid' => $currentUser['id'], 'tid'=>currentTenantId($currentUser), 'ft' => $formType, 'pid' => $projectId, 'pid2' => $projectId]);
         }
         jsonResponse(true, ['deleted' => true], 'پیش‌نویس پاک‌سازی شد.');
     }

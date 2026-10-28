@@ -182,11 +182,12 @@ if ($method === 'POST') {
     if ($projectId) {
         assertTenantProjectAccess($pdo, $projectId, $tenantId, false);
     }
-    assertModulePermission($user, 'suppliers', 'create', $projectId);
+    $savingRate=(isset($_GET['action'])&&$_GET['action']==='rates')||(($body['action']??'')==='save_rate');
+    assertModulePermission($user,'suppliers',$savingRate?'view':'create',$projectId);
     enforceIdempotencyGuard($pdo, $user, 'suppliers:post', $body);
 
     // Phase 2 — TASK 2: Save or update supplier product rate memory
-    if ((isset($_GET['action']) && $_GET['action'] === 'rates') || (($body['action'] ?? '') === 'save_rate')) {
+    if ($savingRate) {
         $supplierId = !empty($body['supplierId'] ?? $body['supplier_id']) ? trim($body['supplierId'] ?? $body['supplier_id']) : null;
         $supplierName = trim($body['supplierName'] ?? $body['supplier_name'] ?? '');
         $product = trim($body['product'] ?? '');
@@ -199,20 +200,33 @@ if ($method === 'POST') {
             jsonResponse(['error' => 'نام تأمین‌کننده، نام جنس، واحد و نرخ معتبر الزامی است.'], 422);
         }
 
-        // Strict separation key: tenant || supplier || product || unit || currency
-        $supplierToken = strtolower($supplierName);
-        $rateKey = $tenantId . '||' . $supplierToken . '||' . strtolower($product) . '||' . strtolower($unit) . '||' . $currency;
-        $id = $body['id'] ?? ('spr-' . substr(md5($rateKey), 0, 16));
+        // Scope BOTH unique keys to the authenticated tenant and project. Never trust a supplied ID.
+        if ($supplierId !== null) {
+            $supplierCheck=$pdo->prepare('SELECT id FROM suppliers WHERE id=:id AND tenant_id=:tid');
+            $supplierCheck->execute(['id'=>$supplierId,'tid'=>$tenantId]);
+            if(!$supplierCheck->fetch())jsonResponse(false,null,'تأمین‌کننده متعلق به این شرکت نیست.',403);
+        }
+        $rateKey='v2:'.hash('sha256',json_encode([$tenantId,$projectId,(function_exists('mb_strtolower')?mb_strtolower($supplierName,'UTF-8'):strtolower($supplierName)),(function_exists('mb_strtolower')?mb_strtolower($product,'UTF-8'):strtolower($product)),(function_exists('mb_strtolower')?mb_strtolower($unit,'UTF-8'):strtolower($unit)),$currency],JSON_UNESCAPED_UNICODE));
+        $id='spr-'.substr(hash('sha256',$rateKey),0,60);
+        $rateLock='nsc_rate_'.substr(hash('sha256',$rateKey),0,48);
+        $lock=$pdo->prepare('SELECT GET_LOCK(:name,5)');$lock->execute(['name'=>$rateLock]);
+        if((int)$lock->fetchColumn()!==1)jsonResponse(false,null,'این نرخ در حال ثبت است؛ دوباره تلاش کنید.',503);
+        register_shutdown_function(function()use($pdo,$rateLock){try{$unlock=$pdo->prepare('SELECT RELEASE_LOCK(:name)');$unlock->execute(['name'=>$rateLock]);}catch(Throwable $e){error_log('Rate lock cleanup failed.');}});
+        $existingRate=$pdo->prepare('SELECT id FROM supplier_product_rates WHERE rate_key=:key AND tenant_id=:tid');
+        $existingRate->execute(['key'=>$rateKey,'tid'=>$tenantId]);
+        $foundRate=$existingRate->fetch();
+        assertModulePermission($user,'suppliers',$foundRate?'edit':'create',$projectId);
+        if($foundRate)$id=(string)$foundRate['id'];
 
         $stmt = $pdo->prepare("
             INSERT INTO supplier_product_rates
             (id, tenant_id, project_id, supplier_id, supplier_name, product, unit, last_agreed_rate, currency, effective_date, rate_key)
             VALUES (:id, :tid, :proj, :sid, :sname, :prod, :unit, :rate, :curr, :edate, :rkey)
             ON DUPLICATE KEY UPDATE
-                supplier_id = COALESCE(VALUES(supplier_id), supplier_id),
-                last_agreed_rate = VALUES(last_agreed_rate),
-                effective_date = VALUES(effective_date),
-                updated_at = CURRENT_TIMESTAMP
+                supplier_id = IF(tenant_id=VALUES(tenant_id) AND rate_key=VALUES(rate_key),COALESCE(VALUES(supplier_id),supplier_id),supplier_id),
+                last_agreed_rate = IF(tenant_id=VALUES(tenant_id) AND rate_key=VALUES(rate_key),VALUES(last_agreed_rate),last_agreed_rate),
+                effective_date = IF(tenant_id=VALUES(tenant_id) AND rate_key=VALUES(rate_key),VALUES(effective_date),effective_date),
+                updated_at = IF(tenant_id=VALUES(tenant_id) AND rate_key=VALUES(rate_key),CURRENT_TIMESTAMP,updated_at)
         ");
         $stmt->execute([
             ':id'    => $id,
@@ -227,6 +241,11 @@ if ($method === 'POST') {
             ':edate' => $effectiveDate,
             ':rkey'  => $rateKey,
         ]);
+
+        $confirmed=$pdo->prepare('SELECT id FROM supplier_product_rates WHERE tenant_id=:tid AND rate_key=:key');
+        $confirmed->execute(['tid'=>$tenantId,'key'=>$rateKey]);$savedId=$confirmed->fetchColumn();
+        if(!$savedId)jsonResponse(false,null,'شناسهٔ نرخ با رکورد دیگری تعارض دارد؛ هیچ رکورد بیگانه تغییر نکرد.',409);
+        $id=(string)$savedId;
 
         jsonResponse([
             'success' => true,
