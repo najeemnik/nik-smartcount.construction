@@ -1,0 +1,9 @@
+Clean release verification — 2026-10-28
+55 API/database checks passed; 28 browser checks passed; 0 uncaught browser errors.
+31 PHP syntax checks passed. Transparent PNG alpha channels verified (0..255); all icon dimensions checked and installed-logo composition visually inspected.
+Fresh standalone installer tested through its browser form against an empty local database, followed by schema/master creation.
+Other tests: separate master and user login, staff quota enforcement, real project and expense forms reaching MySQL, persisted reload, second browser/mobile retrieval, outage/retry across reload, disjoint concurrent records, contradictory edits preserving downloadable recovery, disabled services, permissions, cross-company isolation and revoked sessions.
+PWA metadata and network-only service worker included. OS-level Add to Home Screen installation on an actual iPhone/Android/desktop was not performed here. ProFreeHost account deployment and live nik-smartcount.com failing-save diagnosis were not performed.
+Environment: PHP 8.3.6 / MariaDB 10.11.14 / Chromium 153. Local tests do not guarantee host availability or every original accounting calculation.
+Original React/TypeScript source was not supplied. The complete patched compiled accounting client is retained as accounting-client.js. Readable source of newly built PHP/portal components is included; do not mistake the compiled file for original React source.
+Branding: full logo is the supplied transparent original; textless favicon emblem was produced with the built-in image editing tool using the prompt in BRANDING_NOTES.txt. Resampling creates the required deployment sizes.

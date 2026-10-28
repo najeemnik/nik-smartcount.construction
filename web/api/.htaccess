@@ -1,0 +1,35 @@
+# =====================================================================
+# NSC API Security & Apache Routing Configuration
+# Protection against unauthorized access, directory browsing & exploits
+# =====================================================================
+
+Options -Indexes
+ServerSignature Off
+
+# جلوگیری از مشاهده فایل‌های پیکربندی، کلیدهای رمزنگاری و دیتابیس
+<FilesMatch "\.(sql|env|log|ini|json|git|lock|key|bak|old|swp|dist|md|sh)$">
+    Require all denied
+</FilesMatch>
+
+# مسدودسازی دسترسی عمومی به ابزار کمکی هش (فقط برای مدیر سرور از طریق کنسول یا کلید نصب)
+<Files "make-hash.php">
+    Require local
+</Files>
+
+# تنظیمات کاراکتر انکودینگ
+AddDefaultCharset UTF-8
+
+# هدرهای امنیتی
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+<FilesMatch "^(config(\.example)?|db|credentials)\.php$">
+    Require all denied
+</FilesMatch>
+<IfModule mod_setenvif.c>
+    SetEnvIf Authorization "(.+)" HTTP_AUTHORIZATION=$1
+</IfModule>

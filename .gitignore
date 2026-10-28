@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+!.env.example
+web/api/.secrets/*
+!web/api/.secrets/.htaccess
+!web/api/.secrets/database.example.php
+!web/api/.secrets/schema.sql
+web/uploads/*
+!web/uploads/.htaccess
+web/api/uploads/*
+!web/api/uploads/.htaccess
+*.log
+.DS_Store

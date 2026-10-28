@@ -1,0 +1,14 @@
+# NSC Uploads Protection — no script execution, no HTML/SVG XSS, no listing (§2.5)
+Options -Indexes -ExecCGI
+RemoveHandler .php .phtml .phar .php3 .php4 .php5 .php7 .php8 .phps .pht .cgi .pl .py .sh .js .html .htm .shtml .svg
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<FilesMatch "\.(php|phtml|phar|php3|php4|php5|php7|php8|phps|pht|cgi|pl|py|sh|bash|exe|dll|bat|cmd|com|msi|vbs|js|mjs|cjs|jsp|asp|aspx|html|htm|xhtml|shtml|svg|swf|htaccess|htpasswd|ini|env|config)$">
+    Require all denied
+</FilesMatch>
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set Content-Security-Policy "default-src 'none'"
+    Header set Content-Disposition "attachment"
+</IfModule>
