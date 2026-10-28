@@ -892,7 +892,9 @@ INSERT IGNORE INTO `chart_of_accounts` (`id`,`tenant_id`,`account_code`,`account
 ('coa-7100',NULL,'7100','کارمزد بانک','Bank Charges','د بانک فیس','expense','debit','7000',0,1,1),
 ('coa-7200',NULL,'7200','هزینه قرض و سود','Loan & Finance Cost','د پور لګښت او ګټه','expense','debit','7000',0,1,1),
 ('coa-8000',NULL,'8000','سایر حساب‌ها','Other Accounts','نور حسابونه','expense','debit',NULL,1,1,1),
-('coa-8100',NULL,'8100','تعدیلات حسابداری','Accounting Adjustments','د محاسبې سمونونه','expense','debit','8000',0,1,1);
+('coa-8100',NULL,'8100','تعدیلات حسابداری','Accounting Adjustments','د محاسبې سمونونه','expense','debit','8000',0,1,1),
+-- حساب تعلیقی: باندل کلاینت با SUSPENSE:'8200' سند می‌زند؛ پیش‌تر در seed نبود.
+('coa-8200',NULL,'8200','حساب معلق','Suspense Account','د معلق حساب','expense','debit','8000',0,1,1);
 
 -- =====================================================================
 -- 25. نسخهٔ ساختار — مرجع ارتقای خودکار (api/db.php → nscSchemaEnsure)
@@ -903,8 +905,55 @@ CREATE TABLE IF NOT EXISTS `nsc_schema_meta` (
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO `nsc_schema_meta` (`meta_key`,`meta_value`) VALUES ('core','2026-10-28.1')
+INSERT INTO `nsc_schema_meta` (`meta_key`,`meta_value`) VALUES ('core','2026-10-29.1')
 ON DUPLICATE KEY UPDATE `meta_value` = VALUES(`meta_value`);
+
+-- 26. مشتریان و خریداران اپارتمان (مرجع مطالبات در داشبورد)
+-- کد در api/apartments.php (LEFT JOIN clients) و api/reports.php (SUM(outstanding_receivable))
+-- به آن کوئری می‌زند، ولی پیش از این هیچ‌جا ساخته نمی‌شد: داشبورد روی نصب تازه خطای ۵۰۰ می‌داد.
+CREATE TABLE IF NOT EXISTS `clients` (
+  `id` VARCHAR(64) NOT NULL PRIMARY KEY,
+  `tenant_id` VARCHAR(64) NOT NULL,
+  `client_name` VARCHAR(200) NOT NULL,
+  `phone` VARCHAR(50) NULL,
+  `email` VARCHAR(150) NULL,
+  `national_id` VARCHAR(60) NULL,
+  `address` TEXT NULL,
+  `outstanding_receivable` DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+  `notes` TEXT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_clients_tenant` (`tenant_id`),
+  INDEX `idx_clients_name` (`client_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 27. ردیف‌های چندسایزی خرید میلگرد (پیش‌تر فقط به‌صورت inline در api/materials.php ساخته می‌شد)
+CREATE TABLE IF NOT EXISTS `steel_purchase_lines` (
+  `id` VARCHAR(64) NOT NULL PRIMARY KEY,
+  `procurement_id` VARCHAR(36) NOT NULL,
+  `project_id` VARCHAR(36) NOT NULL,
+  `diameter_mm` DECIMAL(8,2) NOT NULL,
+  `length_m` DECIMAL(8,2) NOT NULL DEFAULT 12.00,
+  `brand_spec` VARCHAR(180) NOT NULL DEFAULT 'عمومی',
+  `use_bundles` TINYINT(1) NOT NULL DEFAULT 0,
+  `bundle_count` INT NULL,
+  `bars_per_bundle` INT NULL,
+  `bar_count` INT NOT NULL DEFAULT 0,
+  `weight_per_bar_kg` DECIMAL(12,3) NOT NULL,
+  `estimated_weight_kg` DECIMAL(16,3) NOT NULL DEFAULT 0.000,
+  `estimated_weight_ton` DECIMAL(16,4) NOT NULL DEFAULT 0.0000,
+  `actual_weight_ton` DECIMAL(16,4) NULL,
+  `confirmed_tonnage` DECIMAL(16,4) NOT NULL DEFAULT 0.0000,
+  `discrepancy_kg` DECIMAL(16,3) NOT NULL DEFAULT 0.000,
+  `discrepancy_ton` DECIMAL(16,4) NOT NULL DEFAULT 0.0000,
+  `discrepancy_pct` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  `price_per_ton` DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+  `currency` VARCHAR(10) NOT NULL DEFAULT 'USD',
+  `total_cost` DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_spl_proc` (`procurement_id`),
+  INDEX `idx_spl_proj_size` (`project_id`, `diameter_mm`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
 

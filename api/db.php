@@ -10,7 +10,7 @@ require_once __DIR__ . '/config.php';
  * نسخهٔ ساختار دیتابیس. با هر تغییر در api/.secrets/schema.sql این مقدار را بالا ببرید؛
  * ارتقای خودکار در اولین درخواست بعدی اجرا می‌شود (بدون حذف هیچ معلوماتی).
  */
-const NSC_SCHEMA_VERSION = '2026-10-28.1';
+const NSC_SCHEMA_VERSION = '2026-10-29.1';
 
 class Database {
     private static ?PDO $instance = null;

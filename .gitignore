@@ -53,3 +53,6 @@ __pycache__/
 
 # --- گزارش بازبینی تولیدشده (محلی) ---
 review/
+
+# --- وابستگی‌های هارنس تست (npm install در tests/) ---
+tests/node_modules
