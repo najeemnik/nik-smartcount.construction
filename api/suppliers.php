@@ -136,7 +136,7 @@ if ($method === 'GET') {
             FROM payment_vouchers pv 
             INNER JOIN projects p ON pv.project_id = p.id 
             WHERE pv.payee_type = 'supplier' AND pv.payee_id = :sid AND p.tenant_id = :tid
-            ORDER BY pv.voucher_date DESC
+            ORDER BY pv.payment_date DESC
         ");
         $payStmt->execute([':sid' => $sid, ':tid' => $tenantId]);
 
@@ -310,8 +310,17 @@ if ($method === 'DELETE') {
     assertModulePermission($user, 'suppliers', 'del');
     $id = $_GET['id'] ?? '';
 
-    $stmt = $pdo->prepare("DELETE FROM suppliers WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)");
-    $stmt->execute([':id' => $id, ':tid' => $tenantId]);
+    // فقط ردیف‌های همین شرکت حذف می‌شوند. پیش از این شرط «tenant_id IS NULL» اجازه می‌داد
+    // هر مدیر شرکتی رکوردهای مشترک/قدیمی (که هیچ شرکتی مالکشان نبود) را حذف کند.
+    $isMaster = (int)($user['is_master'] ?? 0) === 1;
+    $sqlDel = $isMaster
+        ? "DELETE FROM suppliers WHERE id = :id"
+        : "DELETE FROM suppliers WHERE id = :id AND tenant_id = :tid";
+    $stmt = $pdo->prepare($sqlDel);
+    $stmt->execute($isMaster ? [':id' => $id] : [':id' => $id, ':tid' => $tenantId]);
+    if ($stmt->rowCount() === 0) {
+        jsonResponse(['error' => 'تأمین‌کننده یافت نشد یا دسترسی ندارید.'], 404);
+    }
 
     writeAuditLog($pdo, $user['id'], $user['name'], 'DELETE', 'SUPPLIER', $id, null, null);
     jsonResponse(['success' => true]);

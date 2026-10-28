@@ -1,5 +1,17 @@
 <?php
-/** Canonical persistence bridge for the preserved construction client. */
+/**
+ * مسیر رسمی (canonical) ذخیره‌سازی فضای کاری — تنها مسیری که کلاینت واقعاً از آن استفاده می‌کند.
+ *
+ * زنجیرهٔ واقعی: workspace.php (صفحه) → window.NSC_PERSIST → POST /api/workspace.php
+ * با {tenantId, baseVersion, state}. کنترل تعارض بر پایهٔ نسخه است (نه ساعت دستگاه):
+ * اگر baseVersion با نسخهٔ سرور نخواند، پاسخ 409 برمی‌گردد و کلاینت ادغام می‌کند.
+ *
+ * نکتهٔ اصلاحی: در یک بازبینی قبلی این فایل «بازنشسته» علامت خورده بود و
+ * office7.php?action=workspace_sync «رسمی» معرفی شده بود — برعکسِ واقعیت.
+ * جست‌وجو در باندل گمراه‌کننده بود، چون فراخوانی در خود صفحهٔ workspace.php است،
+ * نه در فایل مینیفای‌شده. office7 workspace_sync فقط برای سازگاری باقی مانده و
+ * هیچ فراخواننده‌ای در کلاینت ندارد (نگه‌داشتنش بی‌خطر است، ولی مسیر داده نیست).
+ */
 require_once __DIR__ . '/db.php';
 sendSecurityHeaders();
 $user = authenticateUser();

@@ -147,6 +147,22 @@ if ($method === 'GET') {
                        last_login_at, created_at, updated_at
                 FROM users";
         $tparams = [];
+
+        // کاربران عادی (viewer/accountant/…) فقط ردیف خودشان را می‌بینند.
+        // پیش از این هر کاربر احراز هویت‌شده می‌توانست فهرست کامل همکاران شرکت را
+        // با ایمیل، تلفن و صلاحیت‌ها بخواند (افشای اطلاعات درون‌شرکتی).
+        if (!$meMaster && !$isCompanyAdmin) {
+            if ($meId === '') { jsonResponse(false, null, 'شناسهٔ کاربر مشخص نیست.', 401); }
+            $sql .= " WHERE id = :only_me";
+            $stmt = $db->prepare($sql);
+            $stmt->execute(['only_me' => $meId]);
+            $users = [];
+            foreach ($stmt->fetchAll() as $r) {
+                $users[] = formatOffice7UserRow($r, $hasAppProfile, $hasIsActive, $hasAiEnabled);
+            }
+            jsonResponse(true, ['users' => $users]);
+        }
+
         if ($meId !== '' && !$meMaster) {
             $tenantRootId = $meOwnerId !== '' ? $meOwnerId : ($meServerId !== '' ? $meServerId : $meId);
             $sql .= " WHERE id = :me OR owner_admin_id = :me2 OR LOWER(username) = LOWER(:mu) OR owner_admin_id = :troot OR id = :troot2";
@@ -479,10 +495,16 @@ if ($method === 'POST') {
         $userId = trim((string)($input['userId'] ?? ($input['id'] ?? '')));
         $lockStatus = !empty($input['isLocked']) || !empty($input['isLockedBySuperAdmin']) ? 1 : 0;
 
-        $stmt = $db->prepare("UPDATE users SET is_locked = :l WHERE id = :id AND is_master = 0" . ($isMasterAuthorized ? '' : ' AND owner_admin_id = :owner'));
+        if ($userId === '') { jsonResponse(false, null, 'شناسه کاربر الزامی است.', 400); }
+        $stmt = $db->prepare("UPDATE users SET is_locked = :l, token_version = token_version + 1 WHERE id = :id AND is_master = 0" . ($isMasterAuthorized ? '' : ' AND owner_admin_id = :owner'));
         $lockParams = ['l' => $lockStatus, 'id' => $userId];
         if (!$isMasterAuthorized) $lockParams['owner'] = $currentUser['id'];
         $stmt->execute($lockParams);
+        // پیش از این پاسخ همیشه «موفق» بود، حتی وقتی هیچ ردیفی تغییر نمی‌کرد
+        // (شناسه اشتباه، حساب مدیر ارشد، یا کاربر شرکت دیگر). اکنون صادق است.
+        if ($stmt->rowCount() === 0) {
+            jsonResponse(false, null, 'کاربر یافت نشد یا شما اجازهٔ تغییر وضعیت او را ندارید.', 404);
+        }
 
         logAudit($db, $currentUser['id'] ?? 'master', 'دفتر هفت', $lockStatus ? 'lock' : 'unlock', 'users', $userId, $lockStatus ? 'مسدودسازی دسترسی' : 'رفع مسدودیت دسترسی');
 

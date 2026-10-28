@@ -13,6 +13,6 @@ if(($_GET['action']??'')==='upgrade' && ($_SERVER['REQUEST_METHOD']??'GET')==='P
 }
 if(($_GET['action']??'')==='status' && ($_SERVER['REQUEST_METHOD']??'GET')==='GET'){
  $exists=$db->query("SHOW TABLES LIKE 'app_workspaces'")->fetchColumn();
- jsonResponse(true,['php'=>PHP_VERSION,'database'=>$db->query('SELECT VERSION()')->fetchColumn(),'initialized'=>(int)$db->query('SELECT COUNT(*) FROM users WHERE is_master=1')->fetchColumn()>0,'users'=>(int)$db->query('SELECT COUNT(*) FROM users')->fetchColumn(),'workspaces'=>$exists?(int)$db->query('SELECT COUNT(*) FROM app_workspaces')->fetchColumn():0]);
+ jsonResponse(true,['schemaVersion'=>nscSchemaVersionOf($db),'expectedSchemaVersion'=>NSC_SCHEMA_VERSION,'php'=>PHP_VERSION,'database'=>$db->query('SELECT VERSION()')->fetchColumn(),'initialized'=>(int)$db->query('SELECT COUNT(*) FROM users WHERE is_master=1')->fetchColumn()>0,'users'=>(int)$db->query('SELECT COUNT(*) FROM users')->fetchColumn(),'workspaces'=>$exists?(int)$db->query('SELECT COUNT(*) FROM app_workspaces')->fetchColumn():0]);
 }
 jsonResponse(false,null,'Unknown action.',404);

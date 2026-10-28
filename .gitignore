@@ -1,0 +1,61 @@
+# =====================================================================
+# NiK Smart Count — فایل‌هایی که هرگز نباید در گیت ثبت شوند
+# =====================================================================
+
+# --- اسرار نصب: رمز دیتابیس، کلید امضای توکن، کلید نصب، قفل نصب ---
+api/.secrets/database.php
+api/.secrets/database.previous-*.php
+api/.secrets/db-*
+api/.secrets/jwt_secret.key
+api/.secrets/install.key
+api/.secrets/installed.lock
+api/.secrets/bootstrap.guard
+api/.secrets/schema.lock
+api/.secrets/schema.error
+api/.secrets/install-rate-*.json
+api/.secrets/setup-rate-*.json
+api/.secrets/*.log
+
+# (نسخهٔ نمونه و اسکیمای ساختار عمداً نسخه‌بندی می‌شوند)
+!api/.secrets/database.example.php
+!api/.secrets/schema.sql
+
+# --- آپلودهای کاربران ---
+uploads/*
+!uploads/.htaccess
+api/uploads/*
+!api/uploads/.htaccess
+
+# --- بکاپ و فایل‌های موقت ---
+*.bak
+*.old
+*.orig
+*.sql.gz
+*.zip
+*.tar
+*.tar.gz
+*.tmp
+*~
+.htaccess.bak
+
+# --- ابزار و سیستم ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+node_modules/
+vendor/
+.phpunit.result.cache
+__pycache__/
+*.pyc
+
+# --- گزارش بازبینی تولیدشده (محلی) ---
+review/
+
+# --- وابستگی‌های هارنس تست (npm install در tests/) ---
+tests/node_modules
+
+# --- محیط پایتون هارنس (pip install -r tests/requirements.txt) ---
+tests/.venv

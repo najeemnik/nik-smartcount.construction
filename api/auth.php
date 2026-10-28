@@ -166,8 +166,17 @@ if ($method === 'POST') {
             $ipStmt->execute(['ip' => $clientIp]);
             $ipFails = (int)($ipStmt->fetch()['c'] ?? 0);
 
-            if ($fails >= 5 || $ipFails >= 20) {
+            // آستانهٔ نام کاربری از ۵ به ۱۰ افزایش یافت: با ۵ تلاش، هر کسی می‌توانست
+            // حساب یک کاربر مشخص را ۱۵ دقیقه قفل کند (Lockout DoS). محافظت اصلی
+            // در برابر حملهٔ توزیع‌شده، همان سقف ۲۰ تلاش برای هر IP است.
+            if ($fails >= 10 || $ipFails >= 20) {
                 jsonResponse(false, null, 'به دلیل تلاش‌های ناموفق پی‌هم، ورود برای ۱۵ دقیقه قفل شد. لطفاً بعداً تلاش کنید.', 429);
+            }
+
+            // پاک‌سازی دوره‌ای: جدول تلافی‌های ورود بی‌نهایت رشد نمی‌کند (۲٪ درخواست‌ها).
+            if (random_int(1, 50) === 1) {
+                try { $db->exec('DELETE FROM login_attempts WHERE attempted_at < (NOW() - INTERVAL 1 DAY)'); }
+                catch (Throwable $ignore) { /* prune is best-effort */ }
             }
         } catch (Exception $e) { error_log('Rate-limit check failed: ' . $e->getMessage()); }
 
@@ -180,12 +189,24 @@ if ($method === 'POST') {
         $stmt->execute(['u1' => $username, 'u2' => $username]);
         $user = $stmt->fetch();
 
-        if (!$user || (($action === 'master_login') !== ((int)($user['is_master'] ?? 0) === 1))) {
-            try {
-                $insStmt = $db->prepare("INSERT INTO login_attempts (identifier, ip_address) VALUES (:ident, :ip)");
-                $insStmt->execute(['ident' => $attemptKey, 'ip' => $clientIp]);
-            } catch (Exception $e) { error_log('Rate-limit record failed: ' . $e->getMessage()); }
-            jsonResponse(false, null, 'نام کاربری یا رمز عبور اشتباه است.', 401);
+        // صفحهٔ اشتباه ≠ رمز اشتباه.
+        // پیش از این، مدیر ارشد که از login.php (یا کارمند از office7-login.php) وارد می‌شد،
+        // حتی با رمز درست رد می‌شد و هر تلاش به‌عنوان «ورود ناموفق» ثبت می‌گشت؛ پس چند
+        // تلاش ساده می‌توانست حساب را ۱۵ دقیقه قفل کند.
+        // اکنون: عدم تطابق نوع حساب شکست اعتبارنامه شمرده نمی‌شود و پیام یکسان برای همهٔ
+        // حالت‌ها برگردانده می‌شود تا وجود یا نوع حساب افشا نشود.
+        $roleMismatch = $user && (($action === 'master_login') !== ((int)($user['is_master'] ?? 0) === 1));
+
+        if (!$user || $roleMismatch) {
+            if (!$roleMismatch) {
+                try {
+                    $insStmt = $db->prepare("INSERT INTO login_attempts (identifier, ip_address) VALUES (:ident, :ip)");
+                    $insStmt->execute(['ident' => $attemptKey, 'ip' => $clientIp]);
+                } catch (Exception $e) { error_log('Rate-limit record failed: ' . $e->getMessage()); }
+            }
+            jsonResponse(false, null,
+                'نام کاربری یا رمز عبور اشتباه است. اگر حساب مدیر ارشد دارید از صفحهٔ ورود مدیر استفاده کنید.',
+                401);
         }
 
         if ((int)($user['is_locked'] ?? 0) === 1) {
@@ -581,7 +602,8 @@ if ($method === 'POST') {
 
 if ($method === 'GET') {
     if (($_GET['action'] ?? '') === 'ping') {
-        jsonResponse(true, ['wave' => 110, 'time' => date('c'), 'mbstring' => function_exists('mb_strtolower'), 'php' => PHP_VERSION]);
+        // فقط سیگنال حیات؛ نسخهٔ PHP و وضعیت افزونه‌ها به کاربر ناشناس افشا نمی‌شود.
+        jsonResponse(true, ['wave' => 110, 'time' => date('c')]);
     }
     // دریافت اطلاعات به‌روز کاربر لاگین‌شده از دیتابیس MySQL
     $user = authenticateUser(false);

@@ -1,0 +1,13 @@
+{
+  "name": "nsc-tests",
+  "private": true,
+  "type": "module",
+  "description": "اجرای واقعی کد PHP پروژه در PHP-WASM (بدون نیاز به MySQL)",
+  "scripts": {
+    "test": "node run-tests.mjs"
+  },
+  "dependencies": {
+    "@php-wasm/node": "3.1.61",
+    "@php-wasm/universal": "3.1.61"
+  }
+}

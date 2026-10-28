@@ -341,7 +341,15 @@ if ($method === 'DELETE') {
     }
     assertModulePermission($user, 'contractors', 'del', !empty($old['project_id']) ? (string)$old['project_id'] : null);
 
-    $stmt = $pdo->prepare("DELETE FROM subcontractors WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)");
-    $stmt->execute([':id' => $id, ':tid' => $tenantId]);
+    // همان اصلاح: حذف فقط روی رکوردهای همین شرکت؛ رکوردهای مشترک (tenant_id IS NULL) دست‌نخورده می‌مانند.
+    $isMaster = (int)($user['is_master'] ?? 0) === 1;
+    $sqlDel = $isMaster
+        ? "DELETE FROM subcontractors WHERE id = :id"
+        : "DELETE FROM subcontractors WHERE id = :id AND tenant_id = :tid";
+    $stmt = $pdo->prepare($sqlDel);
+    $stmt->execute($isMaster ? [':id' => $id] : [':id' => $id, ':tid' => $tenantId]);
+    if ($stmt->rowCount() === 0) {
+        jsonResponse(['error' => 'مقاطعه‌کار یافت نشد یا دسترسی ندارید.'], 404);
+    }
     jsonResponse(['success' => true]);
 }

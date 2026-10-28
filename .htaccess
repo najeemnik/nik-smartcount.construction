@@ -1,17 +1,72 @@
+# =====================================================================
+# NiK Smart Count — پیکربندی ریشهٔ هاست (Apache / cPanel)
+# =====================================================================
 Options -Indexes
 DirectoryIndex index.php index.html
-<FilesMatch "(?i)\.(sql|zip|bak|old|log|key|lock|env|ini|md)$">
+
+# ---------------------------------------------------------------------
+# ۱) اجبار HTTPS
+# اگر SSL روی دامنه فعال نیست، چهار خط RewriteCond/RewriteRule زیر را
+# کامنت کنید؛ در غیر این صورت سایت در حلقهٔ ریدایرکت می‌افتد.
+# (ورود و ساخت رمز بدون HTTPS کار نمی‌کند: crypto.subtle فقط روی HTTPS.)
+# ---------------------------------------------------------------------
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    RewriteCond %{HTTP_HOST} !^localhost$ [NC]
+    RewriteCond %{HTTP_HOST} !^127\.0\.0\.1$ [NC]
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</IfModule>
+
+# دسترسی به فایل‌های حساس و پیکربندی ممنوع است
+<FilesMatch "(?i)\.(sql|zip|bak|old|log|key|lock|env|ini|md|yml|yaml|dist|sh|swp)$">
     Require all denied
 </FilesMatch>
+
+# فایل‌های مخفی (از جمله .git و .secrets) هرگز سرو نشوند
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
     Header always set X-Frame-Options "SAMEORIGIN"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
-    <FilesMatch "^(index\.html|login\.html|office7\.html|office7-login\.html|team\.html|nsc-.*-r2\.js|sw\.js|registerSW\.js|manifest\.webmanifest)$">
-        Header set Cache-Control "no-cache"
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()"
+    Header always set Cross-Origin-Opener-Policy "same-origin"
+    Header always set Cross-Origin-Resource-Policy "same-origin"
+    Header always set X-Robots-Tag "noindex, nofollow, noarchive"
+
+    # -----------------------------------------------------------------
+    # ۲) سیاست امنیت محتوا (CSP)
+    # کل اسکریپت‌ها و استایل‌های این برنامه inline هستند و باندل کلاینت
+    # (nsc-accounting-r3.js) با import بارگذاری می‌شود؛ بنابراین 'unsafe-inline'
+    # لازم است. اما connect-src/img-src/form-action/base-uri محدود شده‌اند،
+    # یعنی حتی در صورت اجرای اسکریپت تزریقی، داده‌ها نمی‌توانند به دامنهٔ
+    # مهاجم ارسال شوند و base-uri/object-src بسته است.
+    # گام بعدی (نیازمند بازسازی باندل): nonce و حذف 'unsafe-inline'.
+    # -----------------------------------------------------------------
+    Header always set Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self' blob:; media-src 'self' data: blob:; upgrade-insecure-requests"
+
+    # HSTS فقط وقتی اتصال واقعاً HTTPS است ارسال می‌شود (env=HTTPS)
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" env=HTTPS
+
+    # صفحه‌ها و سرویس‌ورکر همیشه تازه باشند تا آپدیت فوری دیده شود
+    <FilesMatch "^(index|login|office7|office7-login|team|installer)\.php$">
+        Header set Cache-Control "no-store, max-age=0"
+    </FilesMatch>
+    <FilesMatch "^(pwa-sw\.js|manifest\.webmanifest|.*\.html)$">
+        Header set Cache-Control "no-store, max-age=0"
+    </FilesMatch>
+
+    # دارایی‌های ثابت (باندل با ETag و revalidate از nsc-runtime.php سرو می‌شود)
+    <FilesMatch "\.(png|webp|ico|woff2?|ttf)$">
+        Header set Cache-Control "public, max-age=604800"
     </FilesMatch>
 </IfModule>
 
+# توکن Bearer روی برخی هاست‌ها حذف می‌شود؛ این خط آن را به PHP برمی‌گرداند
 <IfModule mod_setenvif.c>
     SetEnvIf Authorization "(.+)" HTTP_AUTHORIZATION=$1
 </IfModule>
