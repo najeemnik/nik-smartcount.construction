@@ -8,9 +8,12 @@ mount می‌شود و PHP 8.3 (ساختهٔ WebAssembly) همان فایل‌ه
 
 ```bash
 cd tests
-npm install          # @php-wasm/node + @php-wasm/universal
-npm test             # یا: node run-tests.mjs
+npm install                          # @php-wasm/node + @php-wasm/universal
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # برای گروه ۸
+npm test                             # یا: node run-tests.mjs
 ```
+
+اگر `.venv` ساخته نشود، گروه ۸ به‌صورت صریح **SKIP** می‌شود (نه PASS پنهان).
 
 خروجی: خلاصهٔ PASS/FAIL در ترمینال و گزارش فارسی در `review/tests.html`
 (مسیر `review/` در `.gitignore` است و فقط محلی می‌ماند). کد خروج ۱ اگر تستی شکست بخورد.
@@ -26,10 +29,13 @@ npm test             # یا: node run-tests.mjs
 | ۵ | اجرای کامل `api/.secrets/schema.sql` با `PDO` جعلی + گارد نسخه (`nscSchemaEnsure`) |
 | ۶ | یکپارچگی seed دفتر حساب‌ها (کد یکتا، والد موجود، نوع/تراز معتبر) |
 | ۷ | هر جدولی که کد صدا می‌زند در اسکیما تعریف شده باشد |
+| ۸ | اعتبارسنجی SQL با موتور واقعی: گرامر MySQL (`sqlglot`) + ساخت جدول و درج seed + `EXPLAIN` روی ۲۰۰+ کوئری استخراج‌شده از PHP (`DuckDB`) |
 
 ## چه چیزی پوشش داده **نمی‌شود**
 
-- کوئری واقعی MySQL/MariaDB (سروری در این محیط نیست؛ `PDO` جعلی فقط جریان دستورها را می‌بیند).
+- **سرور واقعی MySQL/MariaDB**: در این محیط قابل تهیه نیست (downloads.mariadb.org، cdn.mysql.com
+  و حتی GitHub Releases مسدودند). گروه ۸ جایگزین صادقانهٔ آن است: گرامر واقعی MySQL + موتور
+  واقعی SQL. تفاوت‌های مخصوص MySQL (ENUM، InnoDB، DECIMAL، قفل‌گذاری، تراکنش) اجرا نمی‌شوند.
 - باندل مرورگری (`nsc-accounting-r3.js.gz`) و رابط کاربری.
 - همزمانی (concurrency) و رفتار زیر بار.
 

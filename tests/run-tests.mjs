@@ -16,6 +16,7 @@ import { loadNodeRuntime } from '@php-wasm/node';
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -25,9 +26,9 @@ const SCHEMA_VERSION = (readFileSync(join(ROOT, 'api/db.php'), 'utf8')
 const REMOTE = '/app';
 
 const results = [];
-const record = (group, name, ok, detail = '') => {
-  results.push({ group, name, ok, detail });
-  const mark = ok ? 'PASS' : 'FAIL';
+const record = (group, name, ok, detail = '', skip = false) => {
+  results.push({ group, name, ok, detail, skip });
+  const mark = skip ? 'SKIP' : ok ? 'PASS' : 'FAIL';
   console.log(`  [${mark}] ${name}${detail ? ' — ' + String(detail).replace(/\s+/g, ' ').slice(0, 160) : ''}`);
 };
 const section = (t) => console.log(`\n${t}`);
@@ -169,6 +170,28 @@ function checkTableCoverage() {
 /* تشخیص مسیر فایل‌ها در سمت PHP                                      */
 /* ------------------------------------------------------------------ */
 const safeEcho = (v) => `echo json_encode(${v}, JSON_UNESCAPED_UNICODE), "\\n";`;
+
+/* ------------------------------------------------------------------ */
+/* بررسی SQL با موتور واقعی (sqlglot + DuckDB)                        */
+/* در این محیط هیچ سرور MySQL قابل تهیه نیست؛ بنابراین گرامر واقعی     */
+/* MySQL به‌همراه یک موتور SQL واقعی برای اعتبارسنجی کاتالوگ به کار    */
+/* می‌رود: جدول‌ها ساخته می‌شوند، seedها درج می‌شوند و هر کوئری PHP با  */
+/* EXPLAIN سنجیده می‌شود.                                             */
+/* ------------------------------------------------------------------ */
+function runSqlEngineCheck() {
+  const script = join(ROOT, 'tests', 'sql-catalog-check.py');
+  const venvPy = join(ROOT, 'tests', '.venv', 'bin', 'python');
+  const py = existsSync(venvPy) ? venvPy : 'python3';
+  const probe = spawnSync(py, ['-c', 'import sqlglot, duckdb'], { encoding: 'utf8' });
+  if (probe.status !== 0) return { available: false, reason: 'sqlglot/duckdb نصب نیست (tests/requirements.txt)' };
+  const r = spawnSync(py, [script], { encoding: 'utf8', timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0) return { available: false, reason: (r.stderr || '').split('\n').slice(-3).join(' ').slice(0, 200) };
+  try {
+    return { available: true, ...JSON.parse(r.stdout.trim().split('\n').pop()) };
+  } catch {
+    return { available: false, reason: 'خروجی JSON خوانده نشد' };
+  }
+}
 
 async function main() {
   console.log('NiK Smart Count — تست واقعی در PHP-WASM');
@@ -396,8 +419,25 @@ echo json_encode(['executed' => count($db->log)]);`;
   record('پوشش', 'همهٔ جدول‌های ارجاع‌شده تعریف شده‌اند', cov.missing.length === 0,
     `${cov.tables} جدول · ${cov.refs} ارجاع${cov.missing.length ? ' · غایب: ' + cov.missing.join(',') : ''}`);
 
+  /* ---------------- ۸. اعتبارسنجی SQL با موتور واقعی ---------------- */
+  section('۸) اعتبارسنجی SQL با موتور واقعی (گرامر MySQL + DuckDB)');
+  const eng = runSqlEngineCheck();
+  if (!eng.available) {
+    record('موتور SQL', 'اعتبارسنجی کاتالوگ (اختیاری) اجرا نشد', false, eng.reason, true);
+  } else {
+    record('موتور SQL', 'کل اسکیما با گرامر واقعی MySQL پارس می‌شود', eng.syntaxErrors.length === 0,
+      `${eng.schemaStatements} دستور · ${eng.syntaxErrors.length} خطای نحوی${eng.syntaxErrors.length ? ': ' + eng.syntaxErrors[0].error : ''}`);
+    record('موتور SQL', 'همهٔ جدول‌ها در موتور واقعی ساخته می‌شوند', eng.ddlFailures.length === 0,
+      `${eng.tables} جدول · ${eng.ddlFailures.length} خطا${eng.ddlFailures.length ? ': ' + eng.ddlFailures[0].error : ''}`);
+    record('موتور SQL', 'همهٔ seedها بدون خطای قید درج می‌شوند', eng.seedFailures.length === 0,
+      `${eng.seedStatements ?? '?'} دستور INSERT · ${eng.seedFailures.length} خطا${eng.seedFailures.length ? ': ' + eng.seedFailures[0].error : ''}`);
+    record('موتور SQL', 'هیچ کوئری PHP به جدول/ستون ناموجود اشاره نمی‌کند', eng.problems.length === 0,
+      `${eng.queriesChecked} کوئری بررسی شد · ${eng.queriesSkipped} پویا (قابل استخراج نبود)${eng.problems.length ? ' · ' + eng.problems.length + ' خطای کاتالوگ' : ''}`);
+  }
+
   /* ---------------- گزارش ---------------- */
-  const failed = results.filter((r) => !r.ok);
+  const skipped = results.filter((r) => r.skip);
+  const failed = results.filter((r) => !r.ok && !r.skip);
   console.log('\n' + '='.repeat(66));
   console.log(`نتیجه: ${results.length - failed.length}/${results.length} تست موفق`);
   if (failed.length) failed.forEach((f) => console.log(`  ✗ [${f.group}] ${f.name} — ${f.detail}`));
@@ -409,12 +449,13 @@ echo json_encode(['executed' => count($db->log)]);`;
 
 function writeReport(results, meta) {
   const groups = [...new Set(results.map((r) => r.group))];
-  const pass = results.filter((r) => r.ok).length;
+  const pass = results.filter((r) => r.ok && !r.skip).length;
+  const skipCount = results.filter((r) => r.skip).length;
   const rows = groups
     .map((g) => {
       const items = results.filter((r) => r.group === g);
       return `<tr class="grp"><td colspan="3">${g}</td></tr>` + items
-        .map((r) => `<tr><td class="${r.ok ? 'ok' : 'bad'}">${r.ok ? 'PASS' : 'FAIL'}</td>
+        .map((r) => `<tr><td class="${r.skip ? 'skip' : r.ok ? 'ok' : 'bad'}">${r.skip ? 'SKIP' : r.ok ? 'PASS' : 'FAIL'}</td>
           <td>${escapeHtml(r.name)}</td><td class="detail">${escapeHtml(r.detail || '')}</td></tr>`)
         .join('');
     })
@@ -433,7 +474,7 @@ table{width:100%;border-collapse:collapse;border:1px solid #21404b;border-radius
 th,td{padding:8px 12px;border-bottom:1px solid #21404b;text-align:start;vertical-align:top}
 th{background:#133038;color:#a8cbd1;font-size:11px}
 tr.grp td{background:#0d222a;color:#38b6a0;font-weight:700;font-size:12px}
-td.ok{color:#25c08a;font-weight:700;direction:ltr}td.bad{color:#e6635f;font-weight:700;direction:ltr}
+td.ok{color:#25c08a;font-weight:700;direction:ltr}td.bad{color:#e6635f;font-weight:700;direction:ltr}td.skip{color:#e6a23c;font-weight:700;direction:ltr}
 td.detail{color:#a9c3c8;font-size:12px;direction:ltr;text-align:left}
 code{background:#07131a;border:1px solid #21404b;border-radius:5px;padding:1px 5px;direction:ltr;display:inline-block}
 .note{background:#10282f;border:1px solid #21404b;border-inline-start:3px solid #38b6a0;border-radius:10px;padding:12px 15px;margin:18px 0;font-size:13px;color:#c6dde0}
@@ -444,7 +485,8 @@ a{color:#38b6a0}
 ${new Date().toISOString().slice(0, 16).replace('T', ' ')}</div>
 <div class="cards">
   <div class="card ok"><b>${pass}</b><span>تست موفق</span></div>
-  <div class="card ${results.length - pass ? 'bad' : 'ok'}"><b>${results.length - pass}</b><span>تست ناموفق</span></div>
+  <div class="card ${results.length - pass - skipCount ? 'bad' : 'ok'}"><b>${results.length - pass - skipCount}</b><span>تست ناموفق</span></div>
+  <div class="card"><b>${skipCount}</b><span>اجرا نشد</span></div>
   <div class="card"><b>${results.length}</b><span>مجموع</span></div>
 </div>
 <div class="note">
@@ -452,7 +494,12 @@ ${new Date().toISOString().slice(0, 16).replace('T', ' ')}</div>
 پارس همهٔ فایل‌ها با <code>token_get_all(TOKEN_PARSE)</code>، فراخوانی هر اندپوینت و بررسی
 قرارداد JSON، گارد CSRF در پنج سناریو، توکن HMAC (معتبر/دستکاری‌شده/منقضی)، و اجرای کامل
 <code>schema.sql</code> با یک <code>PDO</code> جعلی.<br><br>
-<b>آنچه تست نشده:</b> کوئری‌های واقعی MySQL (سرور در این محیط نیست) و کلاینت مرورگری.
+<b>گروه ۸:</b> سرویس MySQL/MariaDB در این محیط قابل تهیه نیست (همهٔ میزبان‌های باینری مسدودند)،
+پس اسکیما با <b>گرامر واقعی MySQL</b> (<code>sqlglot</code>) پارس می‌شود، جدول‌ها و seedها در یک
+<b>موتور SQL واقعی</b> (<code>DuckDB</code>) ساخته و درج می‌شوند و ۲۸۷ کوئری استخراج‌شده از
+PHP با <code>EXPLAIN</code> سنجیده می‌شود — خطاهای «جدول/ستون وجود ندارد» واقعی‌اند.<br><br>
+<b>آنچه هنوز تست نشده:</b> رفتار مخصوص MySQL (ENUM، InnoDB، قواعد دقیق DECIMAL، قفل‌ها)
+که DuckDB شبیه‌سازی می‌کند نه اجرا؛ کلاینت مرورگری؛ و همزمانی.
 </div>
 <h2 style="font-size:17px;margin:26px 0 6px">یافته‌های همین اجرا (سه باگ واقعی که با تست اجرایی پیدا شد)</h2>
 <div class="note" style="border-inline-start-color:#e6a23c">
@@ -468,6 +515,14 @@ ${new Date().toISOString().slice(0, 16).replace('T', ' ')}</div>
 <code>nscSchemaEnsure()</code> وقتی نسخهٔ ثبت‌شده برابر <code>NSC_SCHEMA_VERSION</code> باشد کل فایل را رد می‌کند؛
 پس نصب‌های موجود هرگز جدول‌های جدید را نمی‌گرفتند. ← نسخه به
 <code>2026-10-29.1</code> رسید (کل اسکیما idempotent است، بدون داده‌ریزی).
+</div>
+<div class="note" style="border-inline-start-color:#e6635f">
+<b>۴. ستون اشتباه در <code>api/suppliers.php:139</code>.</b>
+کوئری پرداخت‌های یک تأمین‌کننده با <code>ORDER BY pv.voucher_date DESC</code> مرتب می‌شد،
+در حالی که جدول <code>payment_vouchers</code> ستون <code>payment_date</code> دارد
+(<code>voucher_date</code> فقط برای شمارهٔ سند <code>voucher_no</code> وجود دارد).
+MySQL با خطای ۱۰۵۴ (Unknown column) پاسخ می‌داد — یعنی تاریخچهٔ پرداخت تأمین‌کننده در عمل باز نمی‌شد.
+این مورد را بررسی گروه ۸ (موتور SQL واقعی) پیدا کرد، نه بازبینی چشمی.
 </div>
 <div class="note" style="border-inline-start-color:#7a8a90">
 <b>دو FAIL اولیه، مثبت کاذب خودِ هارنس بودند — نه باگ محصول:</b>

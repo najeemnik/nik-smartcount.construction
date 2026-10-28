@@ -56,3 +56,6 @@ review/
 
 # --- وابستگی‌های هارنس تست (npm install در tests/) ---
 tests/node_modules
+
+# --- محیط پایتون هارنس (pip install -r tests/requirements.txt) ---
+tests/.venv

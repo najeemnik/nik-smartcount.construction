@@ -136,7 +136,7 @@ if ($method === 'GET') {
             FROM payment_vouchers pv 
             INNER JOIN projects p ON pv.project_id = p.id 
             WHERE pv.payee_type = 'supplier' AND pv.payee_id = :sid AND p.tenant_id = :tid
-            ORDER BY pv.voucher_date DESC
+            ORDER BY pv.payment_date DESC
         ");
         $payStmt->execute([':sid' => $sid, ':tid' => $tenantId]);
 
