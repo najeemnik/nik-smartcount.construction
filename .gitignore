@@ -59,3 +59,6 @@ tests/node_modules
 
 # --- محیط پایتون هارنس (pip install -r tests/requirements.txt) ---
 tests/.venv
+
+# --- بستهٔ استقرار (ساختهٔ tools/make-deploy-package.sh) ---
+deploy-out/
