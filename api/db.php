@@ -6,6 +6,12 @@
 
 require_once __DIR__ . '/config.php';
 
+/**
+ * نسخهٔ ساختار دیتابیس. با هر تغییر در api/.secrets/schema.sql این مقدار را بالا ببرید؛
+ * ارتقای خودکار در اولین درخواست بعدی اجرا می‌شود (بدون حذف هیچ معلوماتی).
+ */
+const NSC_SCHEMA_VERSION = '2026-10-28.1';
+
 class Database {
     private static ?PDO $instance = null;
 
@@ -18,9 +24,73 @@ class Database {
                 $diagnostic=nscConnectionError($e);
                 jsonResponse(false,['code'=>$diagnostic['code']],'['.$diagnostic['code'].'] '.$diagnostic['message'],503);
             }
+            nscSchemaEnsure(self::$instance);
         }
 
         return self::$instance;
+    }
+}
+
+/**
+ * ارتقای خودکار ساختار (Schema Drift Guard)
+ * چرا لازم است: پیش از این، نصب‌های موجودی که جدول‌های جدید را نداشتند تا اجرای دستی
+ * admin.php?action=upgrade با خطای ۵۰۰ روی روزنامچه/تنخواه مواجه می‌شدند.
+ * این تابع فقط وقتی نسخهٔ ثبت‌شده با NSC_SCHEMA_VERSION تفاوت داشته باشد کل schema.sql را
+ * اجرا می‌کند؛ همهٔ دستورها CREATE TABLE IF NOT EXISTS یا INSERT IGNORE هستند.
+ */
+function nscSchemaEnsure(PDO $db): void {
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+
+    if (nscSchemaVersionOf($db) === NSC_SCHEMA_VERSION) return;
+
+    // اگر هاست اجازهٔ DDL ندهد یا schema.sql ناقص باشد، هر ساعت یک‌بار تلاش می‌کنیم نه هر درخواست.
+    // اگر api/.secrets قابل نوشتن نباشد، نشانگرها در پوشهٔ موقت سیستم نگهداری می‌شوند.
+    $stateDir = is_writable(__DIR__ . '/.secrets') ? __DIR__ . '/.secrets' : rtrim(sys_get_temp_dir(), '/') . '/nsc-schema';
+    if (!is_dir($stateDir)) @mkdir($stateDir, 0700, true);
+    $errorMarker = $stateDir . '/schema.error';
+    if (is_file($errorMarker) && (time() - (int)@filemtime($errorMarker)) < 3600) return;
+
+    $schemaFile = __DIR__ . '/.secrets/schema.sql';
+    $sql = is_file($schemaFile) ? (string)@file_get_contents($schemaFile) : '';
+    if (trim($sql) === '') {
+        error_log('NSC schema ensure skipped: api/.secrets/schema.sql is missing or empty.');
+        return;
+    }
+
+    $lock = @fopen($stateDir . '/schema.lock', 'c');
+    if ($lock) @flock($lock, LOCK_EX);
+    try {
+        // درخواست‌های هم‌زمان: بعد از گرفتن قفل دوباره بررسی کن
+        if (nscSchemaVersionOf($db) === NSC_SCHEMA_VERSION) return;
+
+        $sql = preg_replace('/^--.*$/m', '', $sql);
+        foreach (explode(';', $sql) as $statement) {
+            if (trim($statement) !== '') $db->exec($statement);
+        }
+        if (nscSchemaVersionOf($db) !== NSC_SCHEMA_VERSION) {
+            error_log('NSC schema ensure: statements ran but version marker was not written.');
+            @touch($errorMarker);
+            return;
+        }
+        @unlink($errorMarker);
+        error_log('NSC schema ensured at version ' . NSC_SCHEMA_VERSION);
+    } catch (Throwable $e) {
+        error_log('NSC schema ensure failed: ' . $e->getMessage());
+        @touch($errorMarker);
+    } finally {
+        if ($lock) { @flock($lock, LOCK_UN); @fclose($lock); }
+    }
+}
+
+/** نسخهٔ ساختار ثبت‌شده در دیتابیس؛ '' اگر جدول نسخه وجود نداشته باشد. */
+function nscSchemaVersionOf(PDO $db): string {
+    try {
+        $stmt = $db->query("SELECT meta_value FROM nsc_schema_meta WHERE meta_key = 'core' LIMIT 1");
+        return (string)($stmt->fetchColumn() ?: '');
+    } catch (Throwable $e) {
+        return '';
     }
 }
 

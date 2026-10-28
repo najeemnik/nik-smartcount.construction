@@ -1,17 +1,40 @@
+# =====================================================================
+# NiK Smart Count — پیکربندی ریشهٔ هاست (Apache / cPanel)
+# =====================================================================
 Options -Indexes
 DirectoryIndex index.php index.html
-<FilesMatch "(?i)\.(sql|zip|bak|old|log|key|lock|env|ini|md)$">
+
+# دسترسی به فایل‌های حساس و پیکربندی ممنوع است
+<FilesMatch "(?i)\.(sql|zip|bak|old|log|key|lock|env|ini|md|yml|yaml|dist|sh|swp)$">
     Require all denied
 </FilesMatch>
+
+# فایل‌های مخفی (از جمله .git و .secrets) هرگز سرو نشوند
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
     Header always set X-Frame-Options "SAMEORIGIN"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
-    <FilesMatch "^(index\.html|login\.html|office7\.html|office7-login\.html|team\.html|nsc-.*-r2\.js|sw\.js|registerSW\.js|manifest\.webmanifest)$">
-        Header set Cache-Control "no-cache"
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+
+    # صفحه‌ها و سرویس‌ورکر همیشه تازه باشند تا آپدیت فوری دیده شود
+    <FilesMatch "^(index|login|office7|office7-login|team|installer)\.php$">
+        Header set Cache-Control "no-store, max-age=0"
+    </FilesMatch>
+    <FilesMatch "^(pwa-sw\.js|manifest\.webmanifest|.*\.html)$">
+        Header set Cache-Control "no-store, max-age=0"
+    </FilesMatch>
+
+    # دارایی‌های ثابت (باندل با ETag و revalidate از nsc-runtime.php سرو می‌شود)
+    <FilesMatch "\.(png|webp|ico|woff2?|ttf)$">
+        Header set Cache-Control "public, max-age=604800"
     </FilesMatch>
 </IfModule>
 
+# توکن Bearer روی برخی هاست‌ها حذف می‌شود؛ این خط آن را به PHP برمی‌گرداند
 <IfModule mod_setenvif.c>
     SetEnvIf Authorization "(.+)" HTTP_AUTHORIZATION=$1
 </IfModule>

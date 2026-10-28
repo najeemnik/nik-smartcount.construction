@@ -1,5 +1,14 @@
 <?php
-/** Canonical persistence bridge for the preserved construction client. */
+/**
+ * DEPRECATED — مسیر ذخیره‌سازی جایگزین (جدول app_workspaces)
+ *
+ * کلاینت فعلی این فایل را صدا نمی‌زند؛ مسیر رسمی همگام‌سازی:
+ *   office7.php?action=workspace_sync  (جدول workspace_sync_states)
+ *
+ * این فایل فقط برای سازگاری و مهاجرت نگه داشته شده است. پیش از هر تغییر در منطق
+ * همگام‌سازی، ابتدا تصمیم بگیرید کدام مسیر مرجع است و بعد دیگری را بازنشسته کنید؛
+ * نگه‌داشتن دو مسیر نوشتن مستقل باعث واگرایی داده می‌شود.
+ */
 require_once __DIR__ . '/db.php';
 sendSecurityHeaders();
 $user = authenticateUser();

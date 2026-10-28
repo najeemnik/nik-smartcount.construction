@@ -11,10 +11,10 @@ ServerSignature Off
     Require all denied
 </FilesMatch>
 
-# مسدودسازی دسترسی عمومی به ابزار کمکی هش (فقط برای مدیر سرور از طریق کنسول یا کلید نصب)
-<Files "make-hash.php">
-    Require local
-</Files>
+# اسرار نصب (رمز دیتابیس، کلید امضا، کلید نصب) فقط از طریق PHP قابل خواندن است
+<FilesMatch "^(database(\.previous-[a-f0-9]+)?|jwt_secret)\.(php|key)$|^(install\.key|installed\.lock|bootstrap\.guard|schema\.lock|schema\.error|.*-rate-.*\.json)$">
+    Require all denied
+</FilesMatch>
 
 # تنظیمات کاراکتر انکودینگ
 AddDefaultCharset UTF-8
