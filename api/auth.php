@@ -166,8 +166,17 @@ if ($method === 'POST') {
             $ipStmt->execute(['ip' => $clientIp]);
             $ipFails = (int)($ipStmt->fetch()['c'] ?? 0);
 
-            if ($fails >= 5 || $ipFails >= 20) {
+            // آستانهٔ نام کاربری از ۵ به ۱۰ افزایش یافت: با ۵ تلاش، هر کسی می‌توانست
+            // حساب یک کاربر مشخص را ۱۵ دقیقه قفل کند (Lockout DoS). محافظت اصلی
+            // در برابر حملهٔ توزیع‌شده، همان سقف ۲۰ تلاش برای هر IP است.
+            if ($fails >= 10 || $ipFails >= 20) {
                 jsonResponse(false, null, 'به دلیل تلاش‌های ناموفق پی‌هم، ورود برای ۱۵ دقیقه قفل شد. لطفاً بعداً تلاش کنید.', 429);
+            }
+
+            // پاک‌سازی دوره‌ای: جدول تلافی‌های ورود بی‌نهایت رشد نمی‌کند (۲٪ درخواست‌ها).
+            if (random_int(1, 50) === 1) {
+                try { $db->exec('DELETE FROM login_attempts WHERE attempted_at < (NOW() - INTERVAL 1 DAY)'); }
+                catch (Throwable $ignore) { /* prune is best-effort */ }
             }
         } catch (Exception $e) { error_log('Rate-limit check failed: ' . $e->getMessage()); }
 
@@ -581,7 +590,8 @@ if ($method === 'POST') {
 
 if ($method === 'GET') {
     if (($_GET['action'] ?? '') === 'ping') {
-        jsonResponse(true, ['wave' => 110, 'time' => date('c'), 'mbstring' => function_exists('mb_strtolower'), 'php' => PHP_VERSION]);
+        // فقط سیگنال حیات؛ نسخهٔ PHP و وضعیت افزونه‌ها به کاربر ناشناس افشا نمی‌شود.
+        jsonResponse(true, ['wave' => 110, 'time' => date('c')]);
     }
     // دریافت اطلاعات به‌روز کاربر لاگین‌شده از دیتابیس MySQL
     $user = authenticateUser(false);

@@ -3,6 +3,22 @@ header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: SAMEORIGIN');
+header('X-Robots-Tag: noindex, nofollow');
+
+/**
+ * نصب پس از تکمیل باید نامرئی باشد.
+ * پیش از این صفحه همیشه سرو می‌شد و فقط دکمه‌ها خطا می‌دادند: یک هدف واضح برای
+ * حمله‌کننده و یک ریسک واقعی اگر روزی فایل قفل حذف یا از دست برود.
+ * برای نصب دوباره (فقط روی یک دیتابیس خالی): فایل api/.secrets/installed.lock را
+ * دستی حذف کنید و کلید نصب تازه بسازید.
+ */
+if (is_file(__DIR__ . '/api/.secrets/installed.lock')) {
+    http_response_code(404);
+    echo '<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><title>یافت نشد</title>'
+        . '<p style="font-family:Tahoma,sans-serif;padding:40px;text-align:center">'
+        . 'صفحه یافت نشد. <a href="/login.php">ورود به حساب</a></p></html>';
+    exit;
+}
 ?>
 <!doctype html><html lang="fa" dir="rtl"><head><link rel="icon" href="/assets/favicon-32.png"><link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>نصب مستقل حسابداری نیک</title><style>
 *{box-sizing:border-box}body{margin:0;background:#edf4f2;color:#16382e;font:16px/1.9 Tahoma,Arial,sans-serif}main{max-width:650px;margin:35px auto;padding:24px;background:white;border-radius:16px}label{display:block;margin-top:12px}input{display:block;width:100%;padding:12px;border:1px solid #b4cfc4;border-radius:7px;font:inherit;direction:ltr}button{padding:12px 18px;margin:16px 0 0 8px;border:0;border-radius:7px;background:#08775b;color:white;font:inherit;cursor:pointer}button:disabled{opacity:.5}#result{padding:15px;background:#e5f4ec;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:18px}#result.bad{background:#fee9e9;color:#862323}h1{font-size:23px}h2{font-size:19px;border-top:1px solid #ddd;padding-top:20px}small{color:#537065}fieldset{border:0;padding:0}a{color:#076246}code{direction:ltr;display:inline-block}

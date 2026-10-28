@@ -147,6 +147,22 @@ if ($method === 'GET') {
                        last_login_at, created_at, updated_at
                 FROM users";
         $tparams = [];
+
+        // کاربران عادی (viewer/accountant/…) فقط ردیف خودشان را می‌بینند.
+        // پیش از این هر کاربر احراز هویت‌شده می‌توانست فهرست کامل همکاران شرکت را
+        // با ایمیل، تلفن و صلاحیت‌ها بخواند (افشای اطلاعات درون‌شرکتی).
+        if (!$meMaster && !$isCompanyAdmin) {
+            if ($meId === '') { jsonResponse(false, null, 'شناسهٔ کاربر مشخص نیست.', 401); }
+            $sql .= " WHERE id = :only_me";
+            $stmt = $db->prepare($sql);
+            $stmt->execute(['only_me' => $meId]);
+            $users = [];
+            foreach ($stmt->fetchAll() as $r) {
+                $users[] = formatOffice7UserRow($r, $hasAppProfile, $hasIsActive, $hasAiEnabled);
+            }
+            jsonResponse(true, ['users' => $users]);
+        }
+
         if ($meId !== '' && !$meMaster) {
             $tenantRootId = $meOwnerId !== '' ? $meOwnerId : ($meServerId !== '' ? $meServerId : $meId);
             $sql .= " WHERE id = :me OR owner_admin_id = :me2 OR LOWER(username) = LOWER(:mu) OR owner_admin_id = :troot OR id = :troot2";

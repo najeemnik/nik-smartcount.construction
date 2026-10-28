@@ -522,6 +522,14 @@ function enforceIdempotencyGuard(PDO $db, array $user, string $module, array $pa
         }
     }
     @file_put_contents($lockFile, (string)$now, LOCK_EX);
+
+    // پاک‌سازی دوره‌ای: فایل‌های قفل قدیمی جمع می‌شوند تا این پوشه بی‌نهایت رشد نکند.
+    if (random_int(1, 50) === 1) {
+        foreach ((array)@glob($lockDir . '/*.lock') as $stale) {
+            $mtime = (int)@filemtime($stale);
+            if ($mtime > 0 && ($now - $mtime) > 600) @unlink($stale);
+        }
+    }
 }
 
 /**

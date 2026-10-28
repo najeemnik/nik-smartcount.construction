@@ -66,6 +66,10 @@ function sendSecurityHeaders() {
     header("X-Frame-Options: SAMEORIGIN");
     header("X-XSS-Protection: 1; mode=block");
     header("Referrer-Policy: strict-origin-when-cross-origin");
+    header("Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=()");
+    header("Cross-Origin-Resource-Policy: same-origin");
+    header("Cross-Origin-Opener-Policy: same-origin");
+    header("X-Robots-Tag: noindex, nofollow, noarchive");
     header("Content-Security-Policy: default-src 'none'; frame-ancestors 'self'");
     header("Content-Type: application/json; charset=UTF-8");
     header("Cache-Control: no-store, private");
