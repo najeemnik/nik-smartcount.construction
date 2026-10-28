@@ -66,7 +66,7 @@ function nscSchemaEnsure(PDO $db): void {
         if (nscSchemaVersionOf($db) === NSC_SCHEMA_VERSION) return;
 
         $sql = preg_replace('/^--.*$/m', '', $sql);
-        foreach (explode(';', $sql) as $statement) {
+        foreach (nscSplitSqlStatements($sql) as $statement) {
             if (trim($statement) !== '') $db->exec($statement);
         }
         if (nscSchemaVersionOf($db) !== NSC_SCHEMA_VERSION) {
@@ -82,6 +82,55 @@ function nscSchemaEnsure(PDO $db): void {
     } finally {
         if ($lock) { @flock($lock, LOCK_UN); @fclose($lock); }
     }
+}
+
+/**
+ * تقسیم schema.sql به دستورهای جدا.
+ * چرا explode(';') کافی نیست: اگر متن داخل یک رشته (مثلاً نام حساب یا توضیح فارسی)
+ * شامل «;» باشد، دستور از وسط نصف می‌شود، خطای نحوی می‌دهد و کل ارتقا بی‌صدا شکست
+ * می‌خورد (نشانگر schema.error نوشته می‌شود و تا یک ساعت تلاش بعدی انجام نمی‌شود).
+ * این نسخه کوتیشن تک/دوتایی، بک‌تیک و کاراکتر escape را در نظر می‌گیرد.
+ *
+ * @return string[]
+ */
+function nscSplitSqlStatements(string $sql): array
+{
+    $out = [];
+    $cur = '';
+    $len = strlen($sql);
+    $quote = null;
+    for ($i = 0; $i < $len; $i++) {
+        $ch = $sql[$i];
+        if ($quote !== null) {
+            $cur .= $ch;
+            if ($ch === '\\' && $i + 1 < $len) {
+                $cur .= $sql[++$i];      // کاراکتر escape‌شده را همان‌طور نگه دار
+                continue;
+            }
+            if ($ch === $quote) {
+                if ($i + 1 < $len && $sql[$i + 1] === $quote) {
+                    $cur .= $sql[++$i];  // '' یا "" یا `` دوتایی = کوتیشن فرار‌داده‌شده
+                    continue;
+                }
+                $quote = null;
+            }
+            continue;
+        }
+        if ($ch === "'" || $ch === '"' || $ch === '`') {
+            $quote = $ch;
+            $cur .= $ch;
+            continue;
+        }
+        if ($ch === ';') {
+            if (trim($cur) !== '') $out[] = $cur;
+            $cur = '';
+            continue;
+        }
+        $cur .= $ch;
+    }
+    if (trim($cur) !== '') $out[] = $cur;
+
+    return $out;
 }
 
 /** نسخهٔ ساختار ثبت‌شده در دیتابیس؛ '' اگر جدول نسخه وجود نداشته باشد. */

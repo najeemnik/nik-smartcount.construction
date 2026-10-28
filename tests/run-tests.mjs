@@ -401,6 +401,28 @@ echo json_encode(['executed' => count($db->log)]);`;
   try { np = JSON.parse(noop.out.trim().split('\n').pop()); } catch { /* ignore */ }
   record('اسکیما', 'روی نصب به‌روز هیچ دستوری اجرا نمی‌شود', np.executed === 0, `exec=${np.executed}`);
 
+  /* تقسیم‌کنندهٔ دستورها: نقطه‌ویرگول داخل رشته نباید دستور را نصف کند */
+  const splitTest = `<?php
+require '/app/api/db.php';
+$cases = [
+  ["INSERT INTO t (a) VALUES ('x;y'); SELECT 1", 2],
+  ["INSERT INTO t (a) VALUES ('it''s; fine')", 1],
+  ["CREATE TABLE \`a;b\` (id INT); INSERT INTO \`a;b\` VALUES (1)", 2],
+  ["INSERT INTO t (a) VALUES ('a\\\\';b'); SELECT 2", 2],
+];
+$out = [];
+foreach ($cases as $i => [$sql, $want]) {
+  $got = count(array_values(array_filter(nscSplitSqlStatements($sql), fn($x) => trim($x) !== '')));
+  $out[] = ['case' => $i, 'want' => $want, 'got' => $got];
+}
+echo json_encode($out, JSON_UNESCAPED_UNICODE), "\\n";`;
+  const sp = await run(php, splitTest);
+  let splitRows = [];
+  try { splitRows = JSON.parse(sp.out.trim().split('\n').pop()); } catch { /* ignore */ }
+  const splitBad = splitRows.filter((r) => r.got !== r.want);
+  record('اسکیما', 'تقسیم دستورها نقطه‌ویرگول داخل رشته را نمی‌شکند', splitRows.length === 4 && splitBad.length === 0,
+    splitBad.length ? `مورد ${splitBad.map((r) => `${r.want}!=${r.got}`).join(',')}` : '۴ سناریو (رشته، escape، بک‌تیک)');
+
   /* ---------------- ۶. یکپارچگی دفتر حساب‌ها ---------------- */
   section('۶) یکپارچگی seed دفتر حساب‌ها (۱۸۷ حساب)');
   const chart = checkChartSeed();
