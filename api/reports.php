@@ -8,6 +8,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 
+require_once __DIR__.'/report-data.php';
 sendSecurityHeaders();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -17,6 +18,9 @@ $tenantId = currentTenantId($user);
 
 $reportType = $_GET['type'] ?? 'dashboard';
 $projectId = $_GET['projectId'] ?? null;
+if(in_array($reportType,['drilldown','transaction_detail'],true)){
+    if(hasProjectRestrictions($user)&&!$projectId)jsonResponse(false,null,'یک پروژهٔ مجاز را انتخاب کنید.',403);
+}else requireScopedProject($user, $reportType === 'dashboard' ? 'dashboard' : 'reports', $projectId);
 $year = (int)($_GET['year'] ?? date('Y'));
 
 if (!empty($projectId)) {
@@ -30,6 +34,8 @@ if ($reportType !== 'drilldown' && $reportType !== 'transaction_detail') {
 // ۱. گزارش داشبورد کلان و شاخص‌های کلیدی (Executive Dashboard)
 // -------------------------------------------------------------
 if ($reportType === 'dashboard') {
+    if(hasProjectRestrictions($user))jsonResponse(false,null,'داشبورد کل شرکت فقط برای حساب دارای دسترسی سراسری است.',403);
+    if($projectId)jsonResponse(false,null,'برای گزارش یک پروژه از project_pnl یا monthly_timeline استفاده کنید؛ داشبورد سراسری است.',400);
     // مجموع درآمد
     $stmt = $db->prepare("SELECT COALESCE(SUM(amount_in_base_afn), 0) as total_rev FROM revenue_entries WHERE tenant_id = :tid");
     $stmt->execute(['tid' => $tenantId]);
@@ -47,7 +53,7 @@ if ($reportType === 'dashboard') {
 
     // موجودی بانک‌ها و صندوق‌ها
     $stmt = $db->prepare("
-        SELECT 
+        SELECT
             COALESCE(SUM(CASE WHEN account_type = 'bank' THEN current_balance ELSE 0 END), 0) as bank_balance,
             COALESCE(SUM(CASE WHEN account_type = 'central_cash' THEN current_balance ELSE 0 END), 0) as cash_balance,
             COALESCE(SUM(CASE WHEN account_type = 'petty_cash' THEN current_balance ELSE 0 END), 0) as petty_balance
@@ -69,7 +75,7 @@ if ($reportType === 'dashboard') {
 
     // تعداد پروژه‌های فعال و تکمیل شده
     $stmt = $db->prepare("
-        SELECT 
+        SELECT
             COUNT(CASE WHEN status = 'active' THEN 1 END) as active_count,
             COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_count
         FROM projects
@@ -104,15 +110,15 @@ if ($reportType === 'dashboard') {
 // -------------------------------------------------------------
 if ($reportType === 'project_pnl') {
     $stmt = $db->prepare("
-        SELECT 
+        SELECT
             p.id, p.project_code, p.name, p.status, p.approved_budget,
             COALESCE((SELECT SUM(amount_in_base_afn) FROM revenue_entries WHERE project_id = p.id AND tenant_id = :tid1), 0) as actual_revenue,
             COALESCE((SELECT SUM(amount_in_base_afn) FROM payment_vouchers WHERE project_id = p.id AND tenant_id = :tid2 AND payment_status != 'cancelled'), 0) as actual_cost
         FROM projects p
-        WHERE p.tenant_id = :tid3
+        WHERE p.tenant_id = :tid3" . ($projectId ? " AND p.id=:pid" : "") . "
         ORDER BY p.created_at DESC
     ");
-    $stmt->execute(['tid1' => $tenantId, 'tid2' => $tenantId, 'tid3' => $tenantId]);
+    $stmt->execute(['tid1'=>$tenantId,'tid2'=>$tenantId,'tid3'=>$tenantId]+($projectId?['pid'=>$projectId]:[]));
     $rows = $stmt->fetchAll();
 
     $pnlList = [];
@@ -164,8 +170,8 @@ if ($reportType === 'budget_vs_actual') {
 
     // مصارف تفکیک شده
     $eStmt = $db->prepare("
-        SELECT expense_category, SUM(amount_in_base_afn) as actual_spent 
-        FROM payment_vouchers 
+        SELECT expense_category, SUM(amount_in_base_afn) as actual_spent
+        FROM payment_vouchers
         WHERE project_id = :pid AND tenant_id = :tid AND payment_status != 'cancelled'
         GROUP BY expense_category
     ");
@@ -202,14 +208,14 @@ if ($reportType === 'budget_vs_actual') {
 if ($reportType === 'monthly_timeline') {
     // محاسبه دقیق عواید ماهانه برای سال مشخص
     $revStmt = $db->prepare("
-        SELECT 
-            MONTH(received_date) as m, 
+        SELECT
+            MONTH(received_date) as m,
             SUM(amount_in_base_afn) as monthly_income
         FROM revenue_entries
-        WHERE YEAR(received_date) = :yr AND tenant_id = :tid
+        WHERE YEAR(received_date) = :yr AND tenant_id = :tid" . ($projectId ? " AND project_id=:pid" : "") . "
         GROUP BY MONTH(received_date)
     ");
-    $revStmt->execute(['yr' => $year, 'tid' => $tenantId]);
+    $revStmt->execute(['yr'=>$year,'tid'=>$tenantId]+($projectId?['pid'=>$projectId]:[]));
     $revMonths = [];
     foreach ($revStmt->fetchAll() as $r) {
         $revMonths[(int)$r['m']] = (float)$r['monthly_income'];
@@ -217,24 +223,24 @@ if ($reportType === 'monthly_timeline') {
 
     // محاسبه مصارف ماهانه برای همان سال
     $expStmt = $db->prepare("
-        SELECT 
-            MONTH(payment_date) as m, 
+        SELECT
+            MONTH(payment_date) as m,
             SUM(amount_in_base_afn) as monthly_expense
         FROM payment_vouchers
-        WHERE YEAR(payment_date) = :yr AND tenant_id = :tid AND payment_status != 'cancelled'
+        WHERE YEAR(payment_date) = :yr AND tenant_id = :tid" . ($projectId ? " AND project_id=:pid" : "") . " AND payment_status != 'cancelled'
         GROUP BY MONTH(payment_date)
     ");
-    $expStmt->execute(['yr' => $year, 'tid' => $tenantId]);
+    $expStmt->execute(['yr'=>$year,'tid'=>$tenantId]+($projectId?['pid'=>$projectId]:[]));
     $expMonths = [];
     foreach ($expStmt->fetchAll() as $e) {
         $expMonths[(int)$e['m']] = (float)$e['monthly_expense'];
     }
 
     $monthsNames = [
-        1 => 'جنوری / حمل', 2 => 'فبروری / ثور', 3 => 'مارچ / جوزا',
-        4 => 'اپریل / سرطان', 5 => 'می / اسد', 6 => 'جون / سنبله',
-        7 => 'جولای / میزان', 8 => 'اگست / عقرب', 9 => 'سپتمبر / قوس',
-        10 => 'اکتوبر / جدی', 11 => 'نوامبر / دلو', 12 => 'دسمبر / حوت'
+        1 => 'جنوری', 2 => 'فبروری', 3 => 'مارچ',
+        4 => 'اپریل', 5 => 'می', 6 => 'جون',
+        7 => 'جولای', 8 => 'اگست', 9 => 'سپتمبر',
+        10 => 'اکتوبر', 11 => 'نوامبر', 12 => 'دسمبر'
     ];
 
     $timeline = [];
@@ -268,18 +274,7 @@ if ($reportType === 'unified_financial' || $reportType === 'steel_rebar') {
     $steelCostByCurrency = [];
 
     try {
-        $sql = "SELECT s.* FROM steel_records s
-                INNER JOIN projects p ON s.project_id = p.id
-                WHERE p.tenant_id = :tid";
-        $params = [':tid' => $tenantId];
-        if ($projectId) {
-            $sql .= " AND s.project_id = :pid";
-            $params[':pid'] = $projectId;
-        }
-        $sql .= " ORDER BY s.date DESC, s.created_at DESC";
-        $stmt = $db->prepare($sql);
-        $stmt->execute($params);
-        foreach ($stmt->fetchAll() as $r) {
+        foreach (steelReportRows($db,$tenantId,$projectId) as $r) {
             $status = strtolower((string)($r['status'] ?? $r['doc_status'] ?? 'active'));
             if ($status === 'cancelled' || $status === 'void' || $status === 'deleted') {
                 continue;
@@ -326,7 +321,7 @@ if ($reportType === 'unified_financial' || $reportType === 'steel_rebar') {
             ];
         }
     } catch (Throwable $e) {
-        // Ignore if table not migrated yet
+        throw $e;
     }
 
     jsonResponse(true, [
@@ -388,22 +383,7 @@ if ($reportType === 'drilldown' || $reportType === 'transaction_detail') {
 
     try {
         if (strpos($metric, 'steel_') === 0) {
-            $sql = "SELECT s.* FROM steel_records s
-                    INNER JOIN projects p ON s.project_id = p.id
-                    WHERE p.tenant_id = :tid";
-            $params = [':tid' => $tenantId];
-            if ($projectId) {
-                $sql .= " AND s.project_id = :pid";
-                $params[':pid'] = $projectId;
-            }
-            if ($recordId) {
-                $sql .= " AND s.id = :rid";
-                $params[':rid'] = $recordId;
-            }
-            $sql .= " ORDER BY s.date DESC, s.created_at DESC";
-            $stmt = $db->prepare($sql);
-            $stmt->execute($params);
-            foreach ($stmt->fetchAll() as $r) {
+            foreach (steelReportRows($db,$tenantId,$projectId,$recordId) as $r) {
                 $status = strtolower((string)($r['status'] ?? $r['doc_status'] ?? 'active'));
                 if ($status === 'cancelled' || $status === 'void' || $status === 'deleted') continue;
 
@@ -465,7 +445,7 @@ if ($reportType === 'drilldown' || $reportType === 'transaction_detail') {
             }
         }
     } catch (Throwable $e) {
-        // Fallback if table does not exist in test sqlite
+        throw $e;
     }
 
     jsonResponse(true, [
@@ -476,3 +456,5 @@ if ($reportType === 'drilldown' || $reportType === 'transaction_detail') {
         'items' => $items,
     ]);
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

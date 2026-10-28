@@ -63,11 +63,15 @@ ensureSupplierRatesTable($pdo);
 // 1. دریافت لیست تأمین‌کنندگان، حافظه نرخ اجناس یا صورت‌حساب معین (GET)
 // =====================================================================
 if ($method === 'GET') {
+    requireScopedProject($user, 'suppliers', $_GET['projectId'] ?? $_GET['project_id'] ?? null);
+
     $projectId = $_GET['project_id'] ?? $_GET['projectId'] ?? null;
     if ($projectId) {
         assertTenantProjectAccess($pdo, $projectId, $tenantId, false);
     }
     assertModulePermission($user, 'suppliers', 'view', $projectId ? (string)$projectId : null);
+
+    if(hasProjectRestrictions($user) && ($_GET['action']??'')!=='rates')jsonResponse(false,null,'صورت‌حساب سراسری تأمین‌کنندگان برای این حساب مجاز نیست.',403);
 
     // Phase 2 — TASK 2: GET supplier product rate memory
     if (isset($_GET['action']) && $_GET['action'] === 'rates') {
@@ -77,8 +81,9 @@ if ($method === 'GET') {
         $unit = $_GET['unit'] ?? null;
         $currency = $_GET['currency'] ?? null;
 
-        $sql = "SELECT * FROM supplier_product_rates WHERE (tenant_id = :tid OR tenant_id IS NULL)";
+        $sql = "SELECT * FROM supplier_product_rates WHERE tenant_id = :tid";
         $params = [':tid' => $tenantId];
+        if($projectId){$sql.=' AND project_id=:scope_pid';$params[':scope_pid']=$projectId;}
         if ($supplierId) {
             $sql .= " AND supplier_id = :sid";
             $params[':sid'] = $supplierId;
@@ -112,7 +117,7 @@ if ($method === 'GET') {
     if (isset($_GET['action']) && $_GET['action'] === 'ledger' && !empty($_GET['supplier_id'])) {
         $sid = $_GET['supplier_id'];
 
-        $supStmt = $pdo->prepare("SELECT * FROM suppliers WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)");
+        $supStmt = $pdo->prepare("SELECT * FROM suppliers WHERE id = :id AND tenant_id = :tid");
         $supStmt->execute([':id' => $sid, ':tid' => $tenantId]);
         $supplier = $supStmt->fetch();
 
@@ -122,28 +127,28 @@ if ($method === 'GET') {
 
         // فاکتورهای خرید از این فروشنده (محدود به پروژه‌های همین شرکت)
         $poStmt = $pdo->prepare("
-            SELECT po.*, p.name AS project_name 
-            FROM purchase_orders po 
-            INNER JOIN projects p ON po.project_id = p.id 
+            SELECT po.*, p.name AS project_name
+            FROM material_procurements po
+            INNER JOIN projects p ON po.project_id = p.id
             WHERE po.supplier_id = :sid AND p.tenant_id = :tid
-            ORDER BY po.order_date DESC
+            ORDER BY po.purchase_date DESC
         ");
         $poStmt->execute([':sid' => $sid, ':tid' => $tenantId]);
 
         // پرداخت‌های انجام شده به این فروشنده (محدود به پروژه‌های همین شرکت)
         $payStmt = $pdo->prepare("
-            SELECT pv.*, p.name AS project_name 
-            FROM payment_vouchers pv 
-            INNER JOIN projects p ON pv.project_id = p.id 
+            SELECT pv.*, p.name AS project_name
+            FROM payment_vouchers pv
+            INNER JOIN projects p ON pv.project_id = p.id
             WHERE pv.payee_type = 'supplier' AND pv.payee_id = :sid AND p.tenant_id = :tid
-            ORDER BY pv.voucher_date DESC
+            ORDER BY pv.payment_date DESC
         ");
         $payStmt->execute([':sid' => $sid, ':tid' => $tenantId]);
 
         // حافظه نرخ اجناس این فروشنده
         $rateStmt = $pdo->prepare("
             SELECT * FROM supplier_product_rates
-            WHERE (tenant_id = :tid OR tenant_id IS NULL)
+            WHERE tenant_id = :tid
               AND (supplier_id = :sid OR LOWER(TRIM(supplier_name)) = LOWER(TRIM(:sname)))
             ORDER BY effective_date DESC, updated_at DESC
         ");
@@ -159,7 +164,7 @@ if ($method === 'GET') {
     }
 
     // دریافت لیست کامل همه تأمین‌کنندگان شرکت
-    $stmt = $pdo->prepare("SELECT * FROM suppliers WHERE (tenant_id = :tid OR tenant_id IS NULL) ORDER BY current_payable_balance DESC, supplier_name ASC");
+    $stmt = $pdo->prepare("SELECT * FROM suppliers WHERE tenant_id = :tid ORDER BY current_payable_balance DESC, supplier_name ASC");
     $stmt->execute([':tid' => $tenantId]);
     jsonResponse([
         'success'   => true,
@@ -242,7 +247,7 @@ if ($method === 'POST') {
     $openingBalance = (float)($body['opening_balance'] ?? 0);
 
     $stmt = $pdo->prepare("
-        INSERT INTO suppliers 
+        INSERT INTO suppliers
         (id, tenant_id, supplier_name, contact_person, phone, address, material_category, tax_id, opening_balance, current_payable_balance, status)
         VALUES (:id, :tid, :name, :contact, :phone, :addr, :cat, :tax, :open_bal, :curr_bal, 'active')
     ");
@@ -283,7 +288,7 @@ if ($method === 'PUT') {
             tax_id = :tax,
             status = :st,
             tenant_id = :tid
-        WHERE id = :id AND (tenant_id = :tid2 OR tenant_id IS NULL)
+        WHERE id = :id AND tenant_id = :tid2
     ");
     $stmt->execute([
         ':id'      => $id,
@@ -310,9 +315,11 @@ if ($method === 'DELETE') {
     assertModulePermission($user, 'suppliers', 'del');
     $id = $_GET['id'] ?? '';
 
-    $stmt = $pdo->prepare("DELETE FROM suppliers WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)");
+    $stmt = $pdo->prepare("DELETE FROM suppliers WHERE id = :id AND tenant_id = :tid");
     $stmt->execute([':id' => $id, ':tid' => $tenantId]);
 
     writeAuditLog($pdo, $user['id'], $user['name'], 'DELETE', 'SUPPLIER', $id, null, null);
     jsonResponse(['success' => true]);
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

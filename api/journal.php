@@ -7,6 +7,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 
+require_once __DIR__.'/validation.php';
 sendSecurityHeaders();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -15,6 +16,8 @@ $user = authenticateUser(false);
 $tenantId = currentTenantId($user);
 
 if ($method === 'GET') {
+    requireScopedProject($user, 'journal', $_GET['projectId'] ?? null);
+
     assertModulePermission($user, 'journal', 'view');
     $action = $_GET['action'] ?? 'entries';
 
@@ -25,20 +28,20 @@ if ($method === 'GET') {
 
     if ($action === 'entries') {
         $stmt = $db->prepare("
-            SELECT j.*, p.name as project_name 
-            FROM journal_entries j 
-            LEFT JOIN projects p ON j.project_id = p.id 
-            WHERE j.tenant_id = :tid
+            SELECT j.*, p.name as project_name
+            FROM journal_entries j
+            LEFT JOIN projects p ON j.project_id = p.id
+            WHERE j.tenant_id = :tid" . (!empty($_GET['projectId']) ? " AND j.project_id = :pid" : "") . "
             ORDER BY j.entry_date DESC LIMIT 100
         ");
-        $stmt->execute(['tid' => $tenantId]);
+        $stmt->execute(!empty($_GET['projectId']) ? ['tid'=>$tenantId,'pid'=>$_GET['projectId']] : ['tid'=>$tenantId]);
         $entries = $stmt->fetchAll();
 
         foreach ($entries as &$entry) {
             $lStmt = $db->prepare("
-                SELECT jl.*, ca.account_name, ca.account_code 
-                FROM journal_lines jl 
-                LEFT JOIN chart_of_accounts ca ON jl.account_id = ca.id 
+                SELECT jl.*, ca.account_name, ca.account_code
+                FROM journal_lines jl
+                LEFT JOIN chart_of_accounts ca ON jl.account_id = ca.id
                 WHERE jl.journal_entry_id = :jid
             ");
             $lStmt->execute(['jid' => $entry['id']]);
@@ -55,7 +58,7 @@ if ($method === 'POST') {
     enforceIdempotencyGuard($db, $user, 'journal:post', $input);
 
     $id = generateUuid();
-    $voucherNo = 'JV-' . date('ymd') . '-' . rand(100, 999);
+    $voucherNo = 'JV-' . date('ymd') . '-' . bin2hex(random_bytes(6));
     $date = !empty($input['entryDate']) ? $input['entryDate'] : date('Y-m-d');
     $narration = trim($input['narration'] ?? 'سند تعدیلات حسابداری');
     $projectId = $input['projectId'] ?? null;
@@ -65,17 +68,22 @@ if ($method === 'POST') {
         jsonResponse(false, null, 'سند روزنامچه باید حداقل دو ردیف حساب (بدهکار و بستانکار) داشته باشد.', 400);
     }
 
-    $totalDebit = 0;
-    $totalCredit = 0;
-    foreach ($lines as $line) {
-        $totalDebit += (float)($line['debitAmount'] ?? $line['debit'] ?? 0);
-        $totalCredit += (float)($line['creditAmount'] ?? $line['credit'] ?? 0);
+    $totalDebitMinor = 0; $totalCreditMinor = 0;
+    foreach ($lines as &$line) {
+        if (!is_array($line)) jsonResponse(false,null,'ردیف حساب معتبر نیست.',400);
+        $debit = moneyMinor($line['debitAmount'] ?? $line['debit'] ?? 0);
+        $credit = moneyMinor($line['creditAmount'] ?? $line['credit'] ?? 0);
+        if (($debit > 0) === ($credit > 0)) jsonResponse(false,null,'هر ردیف باید فقط بدهکار یا فقط بستانکار باشد.',400);
+        $account = $db->prepare('SELECT id FROM chart_of_accounts WHERE id=:id');
+        $account->execute(['id'=>(string)($line['accountId'] ?? '')]);
+        if (!$account->fetch()) jsonResponse(false,null,'سرفصل حساب معتبر نیست.',400);
+        $line['debitAmount'] = $debit / 100; $line['creditAmount'] = $credit / 100;
+        $totalDebitMinor += $debit; $totalCreditMinor += $credit;
+        if ($totalDebitMinor > 999999999999999 || $totalCreditMinor > 999999999999999) jsonResponse(false,null,'مجموع سند بیش از حد مجاز است.',400);
     }
-
-    // بررسی اصل تعادل حسابداری دوطرفه (Total Debits == Total Credits)
-    if (abs($totalDebit - $totalCredit) > 0.01) {
-        jsonResponse(false, null, "سند تراز نیست! مجموع بدهکار ($totalDebit) با بستانکار ($totalCredit) برابر نمی‌باشد.", 400);
-    }
+    unset($line);
+    if ($totalDebitMinor === 0 || $totalDebitMinor !== $totalCreditMinor) jsonResponse(false,null,'سند تراز نیست؛ مجموع بدهکار و بستانکار باید دقیقاً برابر باشد.',400);
+    $totalDebit = $totalDebitMinor / 100; $totalCredit = $totalCreditMinor / 100;
 
     // امنیت: پروژه (در صورت انتخاب) باید متعلق به همین شرکت باشد
     if (!empty($projectId)) {
@@ -136,3 +144,5 @@ if ($method === 'POST') {
         jsonResponse(false, null, 'خطا در ثبت سند حسابداری در پایگاه داده.', 500);
     }
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

@@ -1,0 +1,15 @@
+/api/.secrets/*
+!/api/.secrets/.htaccess
+!/api/.secrets/database.example.php
+!/api/.secrets/schema.sql
+!/api/.secrets/create-install-key.php
+/uploads/*
+!/uploads/.htaccess
+/api/uploads/*
+!/api/uploads/.htaccess
+.env
+.env.*
+*.log
+node_modules/
+/.checks/*results.json
+/.checks/__pycache__/

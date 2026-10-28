@@ -35,8 +35,8 @@ if ($method === 'GET') {
 
         // محاسبه مجموع مصارف واقعی پرداخت‌شده برای این پروژه
         $expStmt = $db->prepare("
-            SELECT expense_category, SUM(amount_in_base_afn) as total_spent 
-            FROM payment_vouchers 
+            SELECT expense_category, SUM(amount_in_base_afn) as total_spent
+            FROM payment_vouchers
             WHERE project_id = :pid AND tenant_id = :tid AND payment_status != 'cancelled'
             GROUP BY expense_category
         ");
@@ -45,8 +45,8 @@ if ($method === 'GET') {
 
         // مجموع عواید دریافتی
         $revStmt = $db->prepare("
-            SELECT SUM(amount_in_base_afn) as total_revenue 
-            FROM revenue_entries 
+            SELECT SUM(amount_in_base_afn) as total_revenue
+            FROM revenue_entries
             WHERE project_id = :pid AND tenant_id = :tid
         ");
         $revStmt->execute(['pid' => $projectId, 'tid' => $tenantId]);
@@ -63,15 +63,15 @@ if ($method === 'GET') {
         // لیست تمام پروژه‌ها
         assertModulePermission($user, 'projects', 'view');
         $stmt = $db->prepare("
-            SELECT p.*, 
+            SELECT p.*,
                    COALESCE((SELECT SUM(amount_in_base_afn) FROM payment_vouchers WHERE project_id = p.id AND tenant_id = :tid1 AND payment_status != 'cancelled'), 0) as total_spent,
                    COALESCE((SELECT SUM(amount_in_base_afn) FROM revenue_entries WHERE project_id = p.id AND tenant_id = :tid2), 0) as total_income
-            FROM projects p 
+            FROM projects p
             WHERE p.tenant_id = :tid3
             ORDER BY p.created_at DESC
         ");
         $stmt->execute(['tid1' => $tenantId, 'tid2' => $tenantId, 'tid3' => $tenantId]);
-        $projects = $stmt->fetchAll();
+        $projects = array_values(array_filter($stmt->fetchAll(), fn($p) => canAccessModule($user, 'projects', 'view', (string)$p['id'])));
         jsonResponse(true, ['projects' => $projects]);
     }
 }
@@ -79,8 +79,8 @@ if ($method === 'GET') {
 if ($method === 'POST') {
     $input = getJsonInput();
     $action = $_GET['action'] ?? 'save_project';
-    $permAction = $action === 'save_budget' ? 'edit' : 'create';
-    assertModulePermission($user, 'projects', $permAction, $input['projectId'] ?? $input['id'] ?? null);
+    $permAction = $action === 'save_budget' ? 'edit' : 'view';
+    assertModulePermission($user, $action === 'save_budget' ? 'budget' : 'projects', $permAction, $input['projectId'] ?? $input['id'] ?? null);
     enforceIdempotencyGuard($db, $user, 'projects:' . $action, $input);
 
     if ($action === 'save_project') {
@@ -100,16 +100,18 @@ if ($method === 'POST') {
             jsonResponse(false, null, 'پروژه یافت نشد یا دسترسی ندارید.', 404);
         }
 
+        assertModulePermission($user, 'projects', $existing ? 'edit' : 'create', (string)$id);
+
         $stmt = $db->prepare("
             INSERT INTO projects (
-                id, tenant_id, project_code, name, client_name, contract_value, 
-                approved_budget, currency, location, start_date, expected_finish, 
+                id, tenant_id, project_code, name, client_name, contract_value,
+                approved_budget, currency, location, start_date, expected_finish,
                 status, project_manager, total_area_sqm, floors_count, notes, created_by
             ) VALUES (
-                :id, :tid, :code, :name, :client, :contract, 
-                :budget, :curr, :loc, :sdate, :edate, 
+                :id, :tid, :code, :name, :client, :contract,
+                :budget, :curr, :loc, :sdate, :edate,
                 :status, :pm, :area, :floors, :notes, :created_by
-            ) ON DUPLICATE KEY UPDATE 
+            ) ON DUPLICATE KEY UPDATE
                 name = VALUES(name),
                 client_name = VALUES(client_name),
                 contract_value = VALUES(contract_value),
@@ -118,6 +120,8 @@ if ($method === 'POST') {
                 location = VALUES(location),
                 start_date = VALUES(start_date),
                 expected_finish = VALUES(expected_finish),
+                total_area_sqm = VALUES(total_area_sqm),
+                floors_count = VALUES(floors_count),
                 status = VALUES(status),
                 project_manager = VALUES(project_manager),
                 notes = VALUES(notes)
@@ -162,17 +166,18 @@ if ($method === 'POST') {
         $ownStmt = $db->prepare("SELECT id FROM projects WHERE id = :pid AND tenant_id = :tid LIMIT 1");
         $ownStmt->execute(['pid' => $projectId, 'tid' => $tenantId]);
         if (!$ownStmt->fetch()) { jsonResponse(false, null, 'پروژه یافت نشد یا دسترسی ندارید.', 404); }
-        $chkStmt = $db->prepare("SELECT tenant_id FROM project_budgets WHERE id = :id LIMIT 1");
+        $chkStmt = $db->prepare("SELECT tenant_id, project_id FROM project_budgets WHERE id = :id LIMIT 1");
         $chkStmt->execute(['id' => $id]);
         $existing = $chkStmt->fetch();
         if ($existing && (string)$existing['tenant_id'] !== (string)$tenantId) {
             jsonResponse(false, null, 'سرفصل بودجه یافت نشد یا دسترسی ندارید.', 404);
         }
 
+    if ($existing) assertModulePermission($user, 'budget', 'edit', $existing['project_id'] ?: null);
         $stmt = $db->prepare("
             INSERT INTO project_budgets (id, tenant_id, project_id, category_code, category_name, budgeted_amount, currency)
             VALUES (:id, :tid, :pid, :cat, :cname, :amt, 'AFN')
-            ON DUPLICATE KEY UPDATE 
+            ON DUPLICATE KEY UPDATE
                 budgeted_amount = VALUES(budgeted_amount),
                 category_name = VALUES(category_name)
         ");
@@ -188,3 +193,5 @@ if ($method === 'POST') {
         jsonResponse(true, ['id' => $id], 'سرفصل بودجه با موفقیت بروزرسانی شد.');
     }
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

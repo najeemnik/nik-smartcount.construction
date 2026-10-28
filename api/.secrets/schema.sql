@@ -330,6 +330,7 @@ CREATE TABLE IF NOT EXISTS `material_procurements` (
   `payment_voucher_id` VARCHAR(64) NULL,
   `purchase_date` DATE NOT NULL,
   `invoice_no` VARCHAR(100) NULL,
+  `received_by` VARCHAR(150) NULL,
   `estimated_total_kg` DECIMAL(18, 3) NULL,
   `estimated_total_ton` DECIMAL(18, 4) NULL,
   `actual_total_ton` DECIMAL(18, 4) NULL,
@@ -597,4 +598,37 @@ CREATE TABLE IF NOT EXISTS app_workspaces (
  state_json LONGTEXT NOT NULL,
  updated_by VARCHAR(64) NULL,
  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Required reference tables used by apartment, journal and petty-cash APIs.
+CREATE TABLE IF NOT EXISTS clients (
+ id VARCHAR(64) NOT NULL PRIMARY KEY,
+ tenant_id VARCHAR(64) NOT NULL,
+ client_name VARCHAR(200) NOT NULL,
+ phone VARCHAR(50) NULL,
+ outstanding_receivable DECIMAL(18,2) NOT NULL DEFAULT 0,
+ INDEX idx_clients_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS chart_of_accounts (
+ id VARCHAR(64) NOT NULL PRIMARY KEY,
+ account_code VARCHAR(32) NOT NULL UNIQUE,
+ account_name VARCHAR(200) NOT NULL,
+ account_type VARCHAR(32) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT IGNORE INTO chart_of_accounts (id,account_code,account_name,account_type) VALUES
+ ('cash','1000','نقد و بانک','asset'),
+ ('receivables','1100','حساب‌های دریافتنی','asset'),
+ ('payables','2000','حساب‌های پرداختنی','liability'),
+ ('capital','3000','سرمایه','equity'),
+ ('income','4000','عواید','income'),
+ ('expenses','5000','مصارف','expense');
+CREATE TABLE IF NOT EXISTS petty_cash_expenses (
+ id VARCHAR(64) NOT NULL PRIMARY KEY,
+ tenant_id VARCHAR(64) NOT NULL,
+ project_id VARCHAR(64) NULL,
+ petty_cash_account_id VARCHAR(64) NULL,
+ expense_date DATE NOT NULL,
+ amount DECIMAL(18,2) NOT NULL,
+ description TEXT NULL,
+ INDEX idx_petty_tenant_project (tenant_id,project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

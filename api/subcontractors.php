@@ -56,15 +56,17 @@ ensureSubcontractorPhase2Columns($pdo);
 // 1. دریافت لیست مقاطعه‌کاران (GET)
 // =====================================================================
 if ($method === 'GET') {
+    requireScopedProject($user, 'contractors', $_GET['projectId'] ?? $_GET['project_id'] ?? null);
+
     $projectId = $_GET['project_id'] ?? $_GET['projectId'] ?? null;
     if ($projectId) {
         assertTenantProjectAccess($pdo, $projectId, $tenantId, false);
     }
     assertModulePermission($user, 'contractors', 'view', $projectId ? (string)$projectId : null);
 
-    $sql = "SELECT s.*, p.name AS project_name 
-            FROM subcontractors s 
-            LEFT JOIN projects p ON s.project_id = p.id 
+    $sql = "SELECT s.*, p.name AS project_name
+            FROM subcontractors s
+            LEFT JOIN projects p ON s.project_id = p.id
             WHERE (s.tenant_id = :tid OR p.tenant_id = :tid2)";
     $params = [':tid' => $tenantId, ':tid2' => $tenantId];
 
@@ -139,7 +141,7 @@ if ($method === 'POST') {
     ]] : [];
 
     $stmt = $pdo->prepare("
-        INSERT INTO subcontractors 
+        INSERT INTO subcontractors
         (id, tenant_id, contractor_name, trade_specialty, work_category, phone, project_id, contract_date,
          unit, custom_unit, agreed_unit_rate, original_agreed_unit_rate, contracted_quantity, contract_total_amount,
          currency, exchange_rate, contract_value, certified_work_amount, paid_amount, retention_amount,
@@ -345,3 +347,5 @@ if ($method === 'DELETE') {
     $stmt->execute([':id' => $id, ':tid' => $tenantId]);
     jsonResponse(['success' => true]);
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

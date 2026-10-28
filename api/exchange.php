@@ -13,6 +13,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 
+require_once __DIR__.'/validation.php';
 sendSecurityHeaders();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -84,6 +85,8 @@ function isCompletedStatus(string $status): bool {
 // GET: دریافت لیست معاملات صرافی و خلاصه بیلانس جداگانه AFN / USD
 // -------------------------------------------------------------
 if ($method === 'GET') {
+    requireScopedProject($user, 'exchange', $_GET['projectId'] ?? null);
+
     $projectId = $_GET['projectId'] ?? null;
     if ($projectId) {
         assertTenantProjectAccess($db, $projectId, $tenantId, false);
@@ -165,27 +168,28 @@ if ($method === 'POST') {
         $id = !empty($data['id']) ? trim((string)$data['id']) : generateUuid();
         $projectId = trim((string)($data['projectId'] ?? ''));
         assertTenantProjectAccess($db, $projectId, $tenantId, true);
-        $direction = in_array($data['direction'] ?? 'out', ['out', 'in'], true) ? $data['direction'] : 'out';
+        $direction = in_array($data['direction'] ?? 'out', ['out', 'in'], true) ? ($data['direction']??'out') : 'out';
         $agent = trim((string)($data['exchangeAgent'] ?? ''));
         $sender = trim((string)($data['senderName'] ?? ''));
         $recipient = trim((string)($data['recipientName'] ?? ''));
         $date = !empty($data['date']) ? $data['date'] : date('Y-m-d');
         $time = !empty($data['time']) ? trim((string)$data['time']) : date('H:i');
         $ref = !empty($data['referenceNumber']) ? trim((string)$data['referenceNumber']) : ('EXC-' . strtoupper(substr(md5(uniqid()), 0, 6)));
-        $amount = (float)($data['amount'] ?? 0);
-        $currency = in_array(strtoupper($data['currency'] ?? 'AFN'), ['AFN', 'USD'], true) ? strtoupper($data['currency']) : 'AFN';
+        $amount = moneyMinor($data['amount'] ?? 0)/100;
+        $currency = in_array(strtoupper($data['currency'] ?? 'AFN'), ['AFN', 'USD'], true) ? strtoupper($data['currency']??'AFN') : 'AFN';
         $rate = (isset($data['exchangeRate']) && is_numeric($data['exchangeRate']) && (float)$data['exchangeRate'] > 0)
             ? (float)$data['exchangeRate']
             : null;
         $purpose = trim((string)($data['purpose'] ?? ''));
         $notes = isset($data['notes']) ? trim((string)$data['notes']) : null;
         $allowedStatuses = ['draft', 'pending', 'paid', 'received', 'cancelled'];
-        $status = in_array($data['status'] ?? 'draft', $allowedStatuses, true) ? $data['status'] : 'draft';
+        $status = in_array($data['status'] ?? 'draft', $allowedStatuses, true) ? ($data['status']??'draft') : 'draft';
 
         if ($projectId === '' || $agent === '' || $recipient === '' || $amount <= 0) {
             jsonResponse(false, null, 'لطفاً پروژه، نام صراف، گیرنده و مبلغ معتبر را وارد کنید.', 400);
         }
 
+        if(!in_array($currency,['AFN','USD'],true)||($rate!==null&&!is_finite($rate)))jsonResponse(false,null,'اسعار یا نرخ معتبر نیست.',400);
         $canon = computeCanonicalAmounts($amount, $currency, $rate);
 
         $stmt = $db->prepare("
@@ -237,6 +241,12 @@ if ($method === 'POST') {
     }
 
     if ($action === 'update') {
+        $recordId=(string)($_GET['id']??$data['id']??'');
+        $check=$db->prepare('SELECT project_id FROM exchange_transactions WHERE id=:id AND tenant_id=:tid');
+        $check->execute(['id'=>$recordId,'tid'=>$tenantId]);$record=$check->fetch();
+        if(!$record)jsonResponse(false,null,'معامله یافت نشد.',404);
+        if(!canAccessModule($user,'exchange','edit',$record['project_id']?:null))jsonResponse(false,null,'صلاحیت تغییر این پروژه را ندارید.',403);
+
         $id = trim((string)($_GET['id'] ?? ($data['id'] ?? '')));
         if ($id === '') {
             jsonResponse(false, null, 'شناسه معامله الزامی است.', 400);
@@ -248,11 +258,13 @@ if ($method === 'POST') {
             jsonResponse(false, null, 'معامله یافت نشد یا دسترسی ندارید.', 404);
         }
 
-        $amount = isset($data['amount']) ? (float)$data['amount'] : (float)$existing['amount'];
+        $amount = moneyMinor($data['amount'] ?? $existing['amount'])/100;
+        if($amount<=0)jsonResponse(false,null,'مبلغ باید مثبت باشد.',400);
         $currency = isset($data['currency']) ? strtoupper((string)$data['currency']) : $existing['currency'];
         $rate = array_key_exists('exchangeRate', $data)
             ? ((is_numeric($data['exchangeRate']) && (float)$data['exchangeRate'] > 0) ? (float)$data['exchangeRate'] : null)
             : ($existing['exchange_rate'] !== null ? (float)$existing['exchange_rate'] : null);
+        if(!in_array($currency,['AFN','USD'],true)||($rate!==null&&!is_finite($rate)))jsonResponse(false,null,'اسعار یا نرخ معتبر نیست.',400);
         $canon = computeCanonicalAmounts($amount, $currency, $rate);
 
         $stmt = $db->prepare("
@@ -313,6 +325,12 @@ if ($method === 'POST') {
     }
 
     if ($action === 'delete') {
+        $recordId=(string)($_GET['id']??$data['id']??'');
+        $check=$db->prepare('SELECT project_id FROM exchange_transactions WHERE id=:id AND tenant_id=:tid');
+        $check->execute(['id'=>$recordId,'tid'=>$tenantId]);$record=$check->fetch();
+        if(!$record)jsonResponse(false,null,'معامله یافت نشد.',404);
+        if(!canAccessModule($user,'exchange','delete',$record['project_id']?:null))jsonResponse(false,null,'صلاحیت تغییر این پروژه را ندارید.',403);
+
         $id = trim((string)($_GET['id'] ?? ($data['id'] ?? '')));
         if ($id === '') {
             jsonResponse(false, null, 'شناسه معامله الزامی است.', 400);
@@ -323,3 +341,5 @@ if ($method === 'POST') {
         jsonResponse(true, ['id' => $id], 'معامله صرافی حذف گردید.');
     }
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

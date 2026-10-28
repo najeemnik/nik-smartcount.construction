@@ -2,12 +2,13 @@
 /**
  * NSC Core Financial Operations API
  * Income, Payments, Bank, Cash, Petty Cash & Transfers
- * Zero Vulnerability - ACID Transactions on All Balance Updates
+ * Transactional balance updates; validate currency and permissions server-side.
  */
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 
+require_once __DIR__.'/validation.php';
 sendSecurityHeaders();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -19,7 +20,15 @@ $tenantId = currentTenantId($user);
 // GET: دریافت لیست دریافت‌ها، پرداخت‌ها، حساب‌ها و انتقالات
 // -------------------------------------------------------------
 if ($method === 'GET') {
+    requireScopedProject($user, 'payments', $_GET['projectId'] ?? null);
+
     $section = $_GET['section'] ?? 'summary';
+    if(hasProjectRestrictions($user) && in_array($section,['summary','treasury_accounts'],true))jsonResponse(false,null,'موجودی سراسری خزانه برای این حساب مجاز نیست.',403);
+    if ($section === 'summary') {
+        $stmt=$db->prepare('SELECT currency, SUM(current_balance) AS balance FROM treasury_accounts WHERE tenant_id=:tid GROUP BY currency');
+        $stmt->execute(['tid'=>$tenantId]);
+        jsonResponse(true,['balances'=>$stmt->fetchAll()]);
+    }
     $projectId = $_GET['projectId'] ?? null;
 
     if ($section === 'treasury_accounts') {
@@ -29,9 +38,9 @@ if ($method === 'GET') {
     }
 
     if ($section === 'incomes') {
-        $sql = "SELECT r.*, p.name as project_name, a.account_name as deposit_account_name 
-                FROM revenue_entries r 
-                LEFT JOIN projects p ON r.project_id = p.id 
+        $sql = "SELECT r.*, p.name as project_name, a.account_name as deposit_account_name
+                FROM revenue_entries r
+                LEFT JOIN projects p ON r.project_id = p.id
                 LEFT JOIN treasury_accounts a ON r.deposit_account_id = a.id";
         $params = ['tid' => $tenantId];
         $sql .= " WHERE r.tenant_id = :tid";
@@ -49,9 +58,9 @@ if ($method === 'GET') {
     }
 
     if ($section === 'payments') {
-        $sql = "SELECT v.*, p.name as project_name, a.account_name as source_account_name 
-                FROM payment_vouchers v 
-                LEFT JOIN projects p ON v.project_id = p.id 
+        $sql = "SELECT v.*, p.name as project_name, a.account_name as source_account_name
+                FROM payment_vouchers v
+                LEFT JOIN projects p ON v.project_id = p.id
                 LEFT JOIN treasury_accounts a ON v.source_account_id = a.id";
         $params = ['tid' => $tenantId];
         $sql .= " WHERE v.tenant_id = :tid";
@@ -70,8 +79,8 @@ if ($method === 'GET') {
 
     if ($section === 'transfers') {
         $stmt = $db->prepare("
-            SELECT t.*, 
-                   fp.name as from_project_name, 
+            SELECT t.*,
+                   fp.name as from_project_name,
                    tp.name as to_project_name,
                    fa.account_name as from_account_name,
                    ta.account_name as to_account_name
@@ -84,13 +93,13 @@ if ($method === 'GET') {
             ORDER BY t.transfer_date DESC LIMIT 100
         ");
         $stmt->execute(['tid' => $tenantId]);
-        jsonResponse(true, ['transfers' => $stmt->fetchAll()]);
+        jsonResponse(true, ['transfers' => array_values(array_filter($stmt->fetchAll(), fn($r) => canAccessModule($user,'payments','view',$r['from_project_id']) && canAccessModule($user,'payments','view',$r['to_project_id']) && (!$projectId || in_array($projectId,[$r['from_project_id'],$r['to_project_id']],true))))]);
     }
 
     if ($section === 'petty_cash') {
-        $sql = "SELECT pc.*, p.name as project_name, a.account_name 
-                FROM petty_cash_expenses pc 
-                LEFT JOIN projects p ON pc.project_id = p.id 
+        $sql = "SELECT pc.*, p.name as project_name, a.account_name
+                FROM petty_cash_expenses pc
+                LEFT JOIN projects p ON pc.project_id = p.id
                 LEFT JOIN treasury_accounts a ON pc.petty_cash_account_id = a.id";
         $params = ['tid' => $tenantId];
         $sql .= " WHERE pc.tenant_id = :tid";
@@ -121,14 +130,15 @@ if ($method === 'POST') {
     // ۱. ثبت عواید / دریافت جدید (Income Register)
     if ($action === 'create_income') {
         $id = generateUuid();
-        $receiptNo = 'REC-' . date('ymd') . '-' . rand(100, 999);
+        $receiptNo = 'REC-' . date('ymd') . '-' . bin2hex(random_bytes(6));
         $projectId = $input['projectId'] ?? '';
-        $amount = (float)($input['amount'] ?? 0);
+        $amount = moneyMinor($input['amount'] ?? 0) / 100;
         $accountId = $input['targetAccountId'] ?? '';
         $date = !empty($input['date']) ? $input['date'] : date('Y-m-d');
         $currency = $input['currency'] ?? 'AFN';
-        $rate = (float)($input['exchangeRate'] ?? 1.0);
-        $baseAmount = $currency === 'USD' ? ($amount * ($rate > 0 ? $rate : 70.0)) : $amount;
+        $rate = (float)($input['exchangeRate'] ?? ($currency === 'AFN' ? 1 : 0));
+        if (!in_array($currency,['AFN','USD'],true) || !is_finite($rate) || $rate <= 0) jsonResponse(false,null,'اسعار یا نرخ تبدیل معتبر نیست.',400);
+        $baseAmount = $currency === 'USD' ? round($amount * $rate, 2) : $amount;
 
         if (empty($projectId) || $amount <= 0 || empty($accountId)) {
             jsonResponse(false, null, 'پروژه، مبلغ و حساب مقصد الزامی هستند.', 400);
@@ -138,9 +148,11 @@ if ($method === 'POST') {
         $ownStmt = $db->prepare("SELECT id FROM projects WHERE id = :pid AND tenant_id = :tid LIMIT 1");
         $ownStmt->execute(['pid' => $projectId, 'tid' => $tenantId]);
         if (!$ownStmt->fetch()) { jsonResponse(false, null, 'پروژه یافت نشد یا دسترسی ندارید.', 404); }
-        $accStmt = $db->prepare("SELECT id FROM treasury_accounts WHERE id = :aid AND tenant_id = :tid LIMIT 1");
+        $accStmt = $db->prepare("SELECT id, currency FROM treasury_accounts WHERE id = :aid AND tenant_id = :tid LIMIT 1");
         $accStmt->execute(['aid' => $accountId, 'tid' => $tenantId]);
-        if (!$accStmt->fetch()) { jsonResponse(false, null, 'حساب مقصد یافت نشد یا دسترسی ندارید.', 404); }
+        $account=$accStmt->fetch();
+        if (!$account) { jsonResponse(false,null,'حساب مقصد یافت نشد.',404); }
+        if ($account['currency'] !== $currency) jsonResponse(false,null,'اسعار حساب مقصد با سند یکسان نیست.',400);
 
         $db->beginTransaction();
         try {
@@ -180,8 +192,8 @@ if ($method === 'POST') {
 
             // افزایش موجودی حساب بانک/صندوق
             $upAcc = $db->prepare("
-                UPDATE treasury_accounts 
-                SET current_balance = current_balance + :amt 
+                UPDATE treasury_accounts
+                SET current_balance = current_balance + :amt
                 WHERE id = :id AND tenant_id = :tid
             ");
             $upAcc->execute(['amt' => $amount, 'id' => $accountId, 'tid' => $tenantId]);
@@ -199,14 +211,15 @@ if ($method === 'POST') {
     // ۲. ثبت پرداخت / هزینه جدید (Payment Register)
     if ($action === 'create_payment') {
         $id = generateUuid();
-        $voucherNo = 'PV-' . date('ymd') . '-' . rand(100, 999);
+        $voucherNo = 'PV-' . date('ymd') . '-' . bin2hex(random_bytes(6));
         $projectId = $input['projectId'] ?? '';
-        $amount = (float)($input['amount'] ?? 0);
+        $amount = moneyMinor($input['amount'] ?? 0) / 100;
         $accountId = $input['sourceAccountId'] ?? null;
         $date = !empty($input['date']) ? $input['date'] : date('Y-m-d');
         $currency = $input['currency'] ?? 'AFN';
-        $rate = (float)($input['exchangeRate'] ?? 1.0);
-        $baseAmount = $currency === 'USD' ? ($amount * ($rate > 0 ? $rate : 70.0)) : $amount;
+        $rate = (float)($input['exchangeRate'] ?? ($currency === 'AFN' ? 1 : 0));
+        if (!in_array($currency,['AFN','USD'],true) || !is_finite($rate) || $rate <= 0) jsonResponse(false,null,'اسعار یا نرخ تبدیل معتبر نیست.',400);
+        $baseAmount = $currency === 'USD' ? round($amount * $rate, 2) : $amount;
 
         if (empty($projectId) || $amount <= 0) {
             jsonResponse(false, null, 'مشخصات پروژه و مبلغ پرداختی الزامی است.', 400);
@@ -217,9 +230,11 @@ if ($method === 'POST') {
         $ownStmt->execute(['pid' => $projectId, 'tid' => $tenantId]);
         if (!$ownStmt->fetch()) { jsonResponse(false, null, 'پروژه یافت نشد یا دسترسی ندارید.', 404); }
         if (!empty($accountId)) {
-            $accStmt = $db->prepare("SELECT id FROM treasury_accounts WHERE id = :aid AND tenant_id = :tid LIMIT 1");
+            $accStmt = $db->prepare("SELECT id, currency FROM treasury_accounts WHERE id = :aid AND tenant_id = :tid LIMIT 1");
             $accStmt->execute(['aid' => $accountId, 'tid' => $tenantId]);
-            if (!$accStmt->fetch()) { jsonResponse(false, null, 'حساب مبدأ یافت نشد یا دسترسی ندارید.', 404); }
+            $account=$accStmt->fetch();
+            if (!$account) { jsonResponse(false,null,'حساب مبدأ یافت نشد.',404); }
+            if ($account['currency'] !== $currency) jsonResponse(false,null,'اسعار حساب مبدأ با سند یکسان نیست.',400);
         }
 
         $db->beginTransaction();
@@ -266,8 +281,8 @@ if ($method === 'POST') {
             // در صورتی که پرداخت از بانک یا صندوق باشد، موجودی کسر گردد
             if (!empty($accountId)) {
                 $upAcc = $db->prepare("
-                    UPDATE treasury_accounts 
-                    SET current_balance = current_balance - :amt 
+                    UPDATE treasury_accounts
+                    SET current_balance = current_balance - :amt
                     WHERE id = :id AND tenant_id = :tid
                 ");
                 $upAcc->execute(['amt' => $amount, 'id' => $accountId, 'tid' => $tenantId]);
@@ -286,10 +301,10 @@ if ($method === 'POST') {
     // ۳. حواله و انتقال بین دو پروژه (حل اساسی مشکل شماره ۶ اکسل)
     if ($action === 'inter_project_transfer') {
         $id = generateUuid();
-        $transferNo = 'TRF-' . date('ymd') . '-' . rand(100, 999);
+        $transferNo = 'TRF-' . date('ymd') . '-' . bin2hex(random_bytes(6));
         $fromProj = $input['fromProjectId'] ?? '';
         $toProj = $input['toProjectId'] ?? '';
-        $amount = (float)($input['amount'] ?? 0);
+        $amount = moneyMinor($input['amount'] ?? 0) / 100;
         $fromAcc = $input['fromAccountId'] ?? null;
         $toAcc = $input['toAccountId'] ?? null;
         $date = !empty($input['transferDate']) ? $input['transferDate'] : date('Y-m-d');
@@ -298,17 +313,22 @@ if ($method === 'POST') {
             jsonResponse(false, null, 'اطلاعات پروژه‌های مبدأ و مقصد نامعتبر است.', 400);
         }
 
+        if (($fromAcc && !$toAcc) || ($toAcc && !$fromAcc) || ($fromAcc && $fromAcc === $toAcc)) jsonResponse(false,null,'دو حساب متفاوت مبدأ و مقصد را انتخاب کنید.',400);
+
         // امنیت: هر دو پروژه و هر دو حساب باید متعلق به همین شرکت باشند
         foreach (['from_p' => $fromProj, 'to_p' => $toProj] as $lbl => $prj) {
             $ownStmt = $db->prepare("SELECT id FROM projects WHERE id = :pid AND tenant_id = :tid LIMIT 1");
             $ownStmt->execute(['pid' => $prj, 'tid' => $tenantId]);
             if (!$ownStmt->fetch()) { jsonResponse(false, null, 'پروژه مبدأ/مقصد یافت نشد یا دسترسی ندارید.', 404); }
+            assertModulePermission($user,'payments','create',(string)$prj);
         }
         foreach (['from_a' => $fromAcc, 'to_a' => $toAcc] as $lbl => $acc) {
             if (!empty($acc)) {
-                $accStmt = $db->prepare("SELECT id FROM treasury_accounts WHERE id = :aid AND tenant_id = :tid LIMIT 1");
+                $accStmt = $db->prepare("SELECT id, currency FROM treasury_accounts WHERE id = :aid AND tenant_id = :tid LIMIT 1");
                 $accStmt->execute(['aid' => $acc, 'tid' => $tenantId]);
-                if (!$accStmt->fetch()) { jsonResponse(false, null, 'حساب مبدأ/مقصد یافت نشد یا دسترسی ندارید.', 404); }
+                $account=$accStmt->fetch();
+                if (!$account) jsonResponse(false,null,'حساب مبدأ/مقصد یافت نشد.',404);
+                if ($account['currency'] !== 'AFN') jsonResponse(false,null,'انتقال افغانی به حساب غیر افغانی مجاز نیست.',400);
             }
         }
 
@@ -362,3 +382,5 @@ if ($method === 'POST') {
         }
     }
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

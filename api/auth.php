@@ -142,15 +142,14 @@ function verifyUserPassword(array $user, string $password, string $loginInput = 
 $schemaFlags = ensureAuthUserSchema($db);
 
 if ($method === 'POST') {
-    $raw = file_get_contents('php://input');
-    $input = json_decode($raw, true) ?: [];
+    $input = getJsonInput();
     $action = $_GET['action'] ?? ($input['action'] ?? 'login');
 
     if (in_array($action, ['login', 'master_login'], true)) {
         $username = trim((string)($input['username'] ?? ''));
-        $password = trim((string)($input['password'] ?? ''));
+        $password = (string)($input['password'] ?? '');
 
-        if ($username === '' || $password === '') {
+        if ($username === '' || $password === '' || strlen($username)>150 || strlen($password)>4096) {
             jsonResponse(false, null, 'لطفاً نام کاربری و رمز عبور را وارد نمایید.', 400);
         }
 
@@ -169,12 +168,12 @@ if ($method === 'POST') {
             if ($fails >= 5 || $ipFails >= 20) {
                 jsonResponse(false, null, 'به دلیل تلاش‌های ناموفق پی‌هم، ورود برای ۱۵ دقیقه قفل شد. لطفاً بعداً تلاش کنید.', 429);
             }
-        } catch (Exception $e) { error_log('Rate-limit check failed: ' . $e->getMessage()); }
+        } catch (Exception $e) { error_log('Rate-limit check failed: ' . $e->getMessage()); jsonResponse(false,null,'محافظ ورود در دسترس نیست؛ دوباره تلاش کنید.',503); }
 
         // جستجوی کاربر با نام کاربری یا ایمیل (بدون حساسیت به حروف بزرگ و کوچک)
         $stmt = $db->prepare("
-            SELECT * FROM users 
-            WHERE LOWER(username) = LOWER(:u1) OR LOWER(email) = LOWER(:u2) 
+            SELECT * FROM users
+            WHERE LOWER(username) = LOWER(:u1) OR LOWER(email) = LOWER(:u2)
             LIMIT 1
         ");
         $stmt->execute(['u1' => $username, 'u2' => $username]);
@@ -267,7 +266,7 @@ if ($method === 'POST') {
         $username = strtolower(trim((string)($p['username'] ?? '')));
         $email = strtolower(trim((string)($p['email'] ?? '')));
         $hash = trim((string)($p['passwordHash'] ?? ''));
-        $rawPassword = trim((string)($p['rawPassword'] ?? ($p['password'] ?? '')));
+        $rawPassword = (string)($p['rawPassword'] ?? ($p['password'] ?? ''));
         $fid = trim((string)($p['id'] ?? ''));
 
         if ($username === '' || !preg_match('/^[a-z0-9._@-]{3,80}$/i', $username)) {
@@ -300,7 +299,7 @@ if ($method === 'POST') {
             $hash = 'sha256$' . hash('sha256', $saltToStore . '::nsc::' . $rawPassword);
         } elseif ($existing && !empty($existing['password_hash'])) {
             $hash = (string)$existing['password_hash'];
-            $saltToStore = !empty($existing['hash_salt']) ? (string)$existing['hash_salt'] : $saltToStore;
+            $saltToStore = !empty($existing['hash_salt']) ? (string)$existing['hash_salt'] : (string)$existing['username'];
         } else {
             logSyncReject($db, $me, $username, 'invalid-hash');
             jsonResponse(false, null, 'رمز عبور برای ایجاد حساب کاربری جدید الزامی است.', 400);
@@ -387,9 +386,12 @@ if ($method === 'POST') {
         if (!$existing && $role !== 'admin' && $ownerId === null) jsonResponse(false,null,'برای کارمند، مالک شرکت را تعیین کنید.',400);
         if ($rawPassword !== '' && strlen($rawPassword)<12) jsonResponse(false,null,'رمز حداقل ۱۲ حرف باشد.',400);
 
+        $passwordChanged = $existing && ($rawPassword !== '' || trim((string)($p['passwordHash'] ?? '')) !== '');
+
         if ($existing && !$meMaster && $isSelf) {
             // Self-service: password + basic profile only (no role/lock/grants escalation)
             $sqlSelf = 'UPDATE users SET name = :n, phone = :ph, password_hash = :h'
+                . ($passwordChanged ? ', token_version = token_version + 1' : '')
                 . ($schemaFlags['hasHashSalt'] ? ', hash_salt = :sa' : '')
                 . ' WHERE id = :id';
             $s = $db->prepare($sqlSelf);
@@ -483,6 +485,7 @@ if ($method === 'POST') {
                 . ($schemaFlags['hasAiEnabled'] ? ', ai_enabled = :ai' : '')
                 . ($schemaFlags['hasHashSalt'] ? ', hash_salt = :sa' : '')
                 . ($schemaFlags['hasAppProfile'] ? ', app_profile_json = :pr' : '')
+                . ($passwordChanged ? ', token_version = token_version + 1' : '')
                 . ' WHERE id = :id';
             $s = $db->prepare($sql);
             $args = [
@@ -587,3 +590,5 @@ if ($method === 'GET') {
     $user = authenticateUser(false);
     jsonResponse(true, ['user' => formatUserPayload($user)]);
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

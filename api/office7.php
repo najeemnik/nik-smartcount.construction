@@ -199,6 +199,7 @@ if ($method === 'GET') {
     }
 
     if ($action === 'workspace_sync') {
+        if (!$currentUser || !in_array($currentUser['role']??'', ['admin','master'],true)) jsonResponse(false,null,'همگام‌سازی کل شرکت برای این نقش مجاز نیست.',403);
         if (!$currentUser) {
             jsonResponse(false, null, 'احراز هویت الزامی است.', 401);
         }
@@ -230,8 +231,8 @@ if ($method === 'GET') {
     if ($action === 'audit_logs') {
         $limit = min((int)($_GET['limit'] ?? 100), 500);
         $stmt = $db->prepare("
-            SELECT * FROM system_audit_logs 
-            ORDER BY created_at DESC 
+            SELECT * FROM system_audit_logs
+            ORDER BY created_at DESC
             LIMIT :lim
         ");
         $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
@@ -663,3 +664,5 @@ if ($method === 'POST') {
         ], 'دسترسی به هوش مصنوعی تأیید شد.');
     }
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

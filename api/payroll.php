@@ -11,6 +11,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 
+require_once __DIR__.'/validation.php';
 sendSecurityHeaders();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -19,9 +20,11 @@ $user = authenticateUser(false);
 $tenantId = currentTenantId($user);
 
 if ($method === 'GET') {
+    requireScopedProject($user, 'labor', $_GET['projectId'] ?? null);
+
     $projectId = $_GET['projectId'] ?? null;
-    $sql = "SELECT lp.*, p.name as project_name 
-            FROM labor_payroll lp 
+    $sql = "SELECT lp.*, p.name as project_name
+            FROM labor_payroll lp
             LEFT JOIN projects p ON lp.project_id = p.id";
     $params = ['tid' => $tenantId];
     $sql .= " WHERE lp.tenant_id = :tid";
@@ -40,7 +43,7 @@ if ($method === 'GET') {
     try {
         $empStmt = $db->prepare("SELECT * FROM employees WHERE tenant_id = :tid ORDER BY created_at DESC");
         $empStmt->execute(['tid' => $tenantId]);
-        $employees = $empStmt->fetchAll();
+        $employees = array_values(array_filter($empStmt->fetchAll(), fn($employee) => canAccessModule($user,'labor','view',$employee['project_id']?:null) && (!$projectId || (string)$employee['project_id']===(string)$projectId)));
     } catch (Exception $e) {
         // Backward compatibility if migration not yet applied
     }
@@ -55,7 +58,7 @@ if ($method === 'POST') {
     if ($reqProjectId) {
         assertTenantProjectAccess($db, $reqProjectId, $tenantId, false);
     }
-    assertModulePermission($user, 'employees', 'create', $reqProjectId);
+    assertModulePermission($user, 'employees', $action==='save_employee'?'view':'create', $reqProjectId);
     enforceIdempotencyGuard($db, $user, 'payroll:' . $action, $input);
 
     // Action 1: Create or update Employee Profile (Phase 5 Task 1 & 2)
@@ -63,6 +66,15 @@ if ($method === 'POST') {
         $empId = !empty($input['id']) ? trim($input['id']) : generateUuid();
         $projectId = trim($input['projectId'] ?? '');
         $assignedIds = is_array($input['assignedProjectIds'] ?? null) ? $input['assignedProjectIds'] : [$projectId];
+        $oldStmt=$db->prepare('SELECT project_id FROM employees WHERE id=:id AND tenant_id=:tid');
+        $oldStmt->execute(['id'=>$empId,'tid'=>$tenantId]);$oldEmployee=$oldStmt->fetch();
+        assertModulePermission($user,'labor',$oldEmployee?'edit':'create',$projectId ?: null);
+        if($oldEmployee)assertModulePermission($user,'labor','edit',$oldEmployee['project_id']?:null);
+        foreach($assignedIds as $assignedId){
+            if($assignedId==='')continue;
+            assertTenantProjectAccess($db,(string)$assignedId,$tenantId);
+            if(!canAccessModule($user,'labor',$oldEmployee?'edit':'create',(string)$assignedId))jsonResponse(false,null,'صلاحیت پروژهٔ تعیین‌شده را ندارید.',403);
+        }
         $fullName = trim($input['fullName'] ?? '');
         $jobPosition = trim($input['jobPosition'] ?? '');
         $startDate = !empty($input['employmentStartDate']) ? $input['employmentStartDate'] : date('Y-m-d');
@@ -160,13 +172,15 @@ if ($method === 'POST') {
     $daysOrUnits = (float)($input['daysOrWorkUnits'] ?? $input['days'] ?? 0);
     $rate = (float)($input['ratePerUnit'] ?? $input['rate'] ?? 0);
     $currency = strtoupper(trim($input['currency'] ?? 'AFN'));
-    $advance = (float)($input['advanceDeduction'] ?? $input['advance'] ?? 0);
+    $advance = moneyMinor($input['advanceDeduction'] ?? $input['advance'] ?? 0)/100;
 
     // Earned wages (No automatic overtime or deductions without configured rules)
-    $earnedAmount = isset($input['earnedAmount']) ? round((float)$input['earnedAmount'], 2) : round($daysOrUnits * $rate, 2);
+    $earnedAmount = isset($input['earnedAmount']) ? moneyMinor($input['earnedAmount'])/100 : round($daysOrUnits * $rate, 2);
     // Cash paid (only what was actually paid; do NOT confuse earned wages with cash payments)
-    $amountPaid = isset($input['amountPaid']) ? round((float)$input['amountPaid'], 2) : max(0, $earnedAmount - $advance);
-    $remainingPayable = max(0, round($earnedAmount - $amountPaid, 2));
+    $amountPaid = moneyMinor($input['amountPaid'] ?? 0)/100;
+    $exchangeRate=(float)($input['exchangeRate']??($currency==='AFN'?1:0));
+    if(!is_finite($earnedAmount)||$earnedAmount<=0||!is_finite($exchangeRate)||$exchangeRate<=0||!in_array($currency,['AFN','USD'],true)||$advance>$earnedAmount||$amountPaid>$earnedAmount-$advance)jsonResponse(false,null,'مبلغ، پیش‌پرداخت، پرداخت یا نرخ تبدیل معاش معتبر نیست.',400);
+    $remainingPayable = max(0, round($earnedAmount - $advance - $amountPaid, 2));
     $isSettled = ($earnedAmount > 0 && $remainingPayable <= 0.009) ? 1 : 0;
 
     $date = !empty($input['payrollDate']) ? $input['payrollDate'] : date('Y-m-d');
@@ -197,7 +211,7 @@ if ($method === 'POST') {
                     recorded_by_user_id, description
                 ) VALUES (
                     :id, :tid, :vno, :pid, 'labor_wage', :wname,
-                    'labor', :amt, :curr, 1.0, :amt2,
+                    'labor', :amt, :curr, :exchange, :amt2,
                     'cash', :dt, 'paid', :appr,
                     :uid, :desc
                 )
@@ -210,7 +224,7 @@ if ($method === 'POST') {
                 'wname' => $workerName,
                 'amt' => $amountPaid,
                 'curr' => $currency,
-                'amt2' => $amountPaid,
+                'amt2' => $currency==='USD'?round($amountPaid*$exchangeRate,2):$amountPaid,'exchange'=>$exchangeRate,
                 'dt' => $date,
                 'appr' => $approvedBy,
                 'uid' => $user['id'],
@@ -268,3 +282,5 @@ if ($method === 'POST') {
         jsonResponse(false, null, 'خطا در ثبت معاش کارمند در پایگاه داده.', 500);
     }
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

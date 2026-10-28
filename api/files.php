@@ -66,9 +66,8 @@ function sanitizeSafeFileName(string $rawName, string $fallbackExt = ''): string
     if ($stem === '') {
         $stem = 'document';
     }
-    if (mb_strlen($stem) > 100) {
-        $stem = mb_substr($stem, 0, 100);
-    }
+    $characters=preg_split('//u',$stem,-1,PREG_SPLIT_NO_EMPTY);
+    if(is_array($characters) && count($characters)>100)$stem=implode('',array_slice($characters,0,100));
 
     $ext = preg_replace('/[^a-z0-9]/', '', $ext);
     if (in_array($ext, FORBIDDEN_EXECUTABLE_EXTENSIONS, true)) {
@@ -133,6 +132,40 @@ function assertNotExecutable(string $fileName, string $mimeType = '', string $ra
             jsonResponse(false, null, 'محتوای باینری فایل حاوی امضای فایل اجرایی یا اسکریپت مخرب است و مسدود شد.', 400);
         }
     }
+}
+
+/** Verify actual decoded content and size rather than client-supplied metadata. */
+function validatedUpload(string $name, string $url): array {
+    $ext=strtolower(pathinfo($name,PATHINFO_EXTENSION));
+    if(!in_array($ext,DEFAULT_PERMITTED_EXTENSIONS,true))jsonResponse(false,null,'فرمت فایل مجاز نیست.',400);
+    if(!preg_match('~^data:([a-zA-Z0-9.+/-]+);base64,([A-Za-z0-9+/=\r\n]+)$~D',$url,$parts))jsonResponse(false,null,'محتوای فایل معتبر نیست.',400);
+    $raw=base64_decode($parts[2],true);
+    if($raw===false || strlen($raw)===0 || strlen($raw)>FILE_MANAGER_MAX_BYTES)jsonResponse(false,null,'حجم یا محتوای فایل معتبر نیست.',400);
+    $mime=(new finfo(FILEINFO_MIME_TYPE))->buffer($raw);
+    assertNotExecutable($name,$mime,$raw);
+    $types=[
+      'jpg'=>['image/jpeg'],'jpeg'=>['image/jpeg'],'png'=>['image/png'],'webp'=>['image/webp'],
+      'gif'=>['image/gif'],'bmp'=>['image/bmp','image/x-ms-bmp'],'pdf'=>['application/pdf'],
+      'txt'=>['text/plain'],'csv'=>['text/plain','text/csv'],
+      'zip'=>['application/zip','application/x-zip-compressed'],
+      'docx'=>['application/zip','application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+      'xlsx'=>['application/zip','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+      'pptx'=>['application/zip','application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+      'odt'=>['application/zip','application/vnd.oasis.opendocument.text'],
+      'ods'=>['application/zip','application/vnd.oasis.opendocument.spreadsheet'],
+      'doc'=>['application/msword','application/CDFV2'],'xls'=>['application/vnd.ms-excel','application/CDFV2'],
+      'ppt'=>['application/vnd.ms-powerpoint','application/CDFV2'],'rtf'=>['text/rtf','application/rtf'],
+      'dwg'=>['image/vnd.dwg','application/acad','application/octet-stream'],
+      'dxf'=>['image/vnd.dxf','text/plain','application/octet-stream']
+    ];
+    if(!in_array($mime,$types[$ext]??[],true))jsonResponse(false,null,'نوع واقعی فایل با پسوند آن مطابقت ندارد.',400);
+    return ['mime'=>$mime,'size'=>strlen($raw),'url'=>'data:'.$mime.';base64,'.base64_encode($raw)];
+}
+function assertFolderScope(PDO $db, $id, string $projectId, string $tenantId): void {
+    if($id===null || $id==='')return;
+    $s=$db->prepare('SELECT id FROM project_folders WHERE id=:id AND project_id=:pid AND tenant_id=:tid');
+    $s->execute(['id'=>$id,'pid'=>$projectId,'tid'=>$tenantId]);
+    if(!$s->fetch())jsonResponse(false,null,'پوشه یافت نشد یا متعلق به این پروژه نیست.',403);
 }
 
 if ($method === 'GET') {
@@ -204,6 +237,7 @@ if ($method === 'POST' || $method === 'PUT') {
         if ($name === '') {
             jsonResponse(false, null, 'نام پوشه الزامی است.', 400);
         }
+        assertFolderScope($db,$data['parentFolderId']??null,(string)$projectId,$tenantId);
         $stmt = $db->prepare("INSERT INTO project_folders (tenant_id, project_id, parent_folder_id, name, category, description, created_by)
                               VALUES (:tid, :pid, :parent, :name, :cat, :desc, :uid)");
         $stmt->execute([
@@ -222,7 +256,9 @@ if ($method === 'POST' || $method === 'PUT') {
         $rawName = $data['fileName'] ?? '';
         $mimeType = $data['mimeType'] ?? 'application/octet-stream';
         $dataUrl = $data['dataUrl'] ?? '';
-        $sizeBytes = (int)($data['sizeBytes'] ?? 0);
+        $verified=validatedUpload($rawName,$dataUrl);
+        $sizeBytes=$verified['size'];$mimeType=$verified['mime'];$dataUrl=$verified['url'];
+        assertFolderScope($db,$data['folderId']??null,(string)$projectId,$tenantId);
 
         assertNotExecutable($rawName, $mimeType, $dataUrl);
         $safeName = sanitizeSafeFileName($rawName);
@@ -262,6 +298,8 @@ if ($method === 'POST' || $method === 'PUT') {
             $rawName = $data['fileName'] ?? 'bill.jpg';
             $mimeType = $data['fileType'] ?? 'image/jpeg';
             $fileUrl = $data['fileUrl'] ?? '';
+            $verified=validatedUpload($rawName,$fileUrl);
+            $mimeType=$verified['mime'];$fileUrl=$verified['url'];
             assertNotExecutable($rawName, $mimeType, $fileUrl);
             $safeName = sanitizeSafeFileName($rawName, 'jpg');
 
@@ -276,7 +314,7 @@ if ($method === 'POST' || $method === 'PUT') {
                 'url' => $fileUrl,
                 'fname' => $safeName,
                 'ftype' => $mimeType,
-                'fsize' => $data['fileSize'] ?? '',
+                'fsize' => (string)$verified['size'],
                 'rtype' => $data['relatedType'] ?? 'expense',
                 'rid' => $data['relatedId'] ?? null,
                 'rlabel' => $data['relatedLabel'] ?? null,
@@ -347,3 +385,5 @@ if ($method === 'DELETE') {
     }
     jsonResponse(true, null, 'حذف با موفقیت انجام شد.');
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.',405);

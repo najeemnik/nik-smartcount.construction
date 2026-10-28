@@ -15,10 +15,12 @@ $user = authenticateUser(false);
 $tenantId = currentTenantId($user);
 
 if ($method === 'GET') {
+    requireScopedProject($user, 'assets', $_GET['projectId'] ?? null);
+
     $projectId = $_GET['projectId'] ?? null;
     assertModulePermission($user, 'assets', 'view', $projectId ? (string)$projectId : null);
-    $sql = "SELECT a.*, p.name as project_name 
-            FROM assets_machinery a 
+    $sql = "SELECT a.*, p.name as project_name
+            FROM assets_machinery a
             LEFT JOIN projects p ON a.assigned_project_id = p.id";
     $params = ['tid' => $tenantId];
     $sql .= " WHERE a.tenant_id = :tid";
@@ -37,7 +39,7 @@ if ($method === 'GET') {
 
 if ($method === 'POST') {
     $input = getJsonInput();
-    assertModulePermission($user, 'assets', 'create', $input['assignedProjectId'] ?? null);
+    assertModulePermission($user, 'assets', 'view', $input['assignedProjectId'] ?? null);
     enforceIdempotencyGuard($db, $user, 'assets:post', $input);
 
     $id = $input['id'] ?? generateUuid();
@@ -57,7 +59,7 @@ if ($method === 'POST') {
     $totalDepreciation = min($cost - $salvage, $annualDepreciation * $yearsElapsed);
     $bookValue = max($salvage, $cost - $totalDepreciation);
 
-    if (empty($name) || $cost <= 0) {
+    if (empty($name) || !is_finite($cost) || $cost <= 0 || $salvage < 0 || $salvage > $cost || strtotime($purchaseDate) === false) {
         jsonResponse(false, null, 'نام دارایی و بهای تمام‌شده الزامی است.', 400);
     }
 
@@ -67,13 +69,15 @@ if ($method === 'POST') {
         $ownStmt->execute(['pid' => $projectId, 'tid' => $tenantId]);
         if (!$ownStmt->fetch()) { jsonResponse(false, null, 'پروژه یافت نشد یا دسترسی ندارید.', 404); }
     }
-    $chkStmt = $db->prepare("SELECT tenant_id FROM assets_machinery WHERE id = :id LIMIT 1");
+    $chkStmt = $db->prepare("SELECT tenant_id, assigned_project_id FROM assets_machinery WHERE id = :id LIMIT 1");
     $chkStmt->execute(['id' => $id]);
     $existing = $chkStmt->fetch();
     if ($existing && (string)$existing['tenant_id'] !== (string)$tenantId) {
         jsonResponse(false, null, 'دارایی یافت نشد یا دسترسی ندارید.', 404);
     }
 
+    assertModulePermission($user,'assets',$existing?'edit':'create',$projectId ?: null);
+    if ($existing) assertModulePermission($user, 'assets', 'edit', $existing['assigned_project_id'] ?: null);
     $stmt = $db->prepare("
         INSERT INTO assets_machinery (
             id, tenant_id, asset_tag_code, asset_name, category, assigned_project_id,
@@ -83,10 +87,16 @@ if ($method === 'POST') {
             :id, :tid, :tag, :name, :cat, :pid,
             :pdate, :cost, :bval, :salvage,
             :life, :serial, :loc, :status, :notes
-        ) ON DUPLICATE KEY UPDATE 
+        ) ON DUPLICATE KEY UPDATE
             asset_name = VALUES(asset_name),
             category = VALUES(category),
             assigned_project_id = VALUES(assigned_project_id),
+            purchase_date = VALUES(purchase_date),
+            purchase_cost = VALUES(purchase_cost),
+            salvage_value = VALUES(salvage_value),
+            useful_life_years = VALUES(useful_life_years),
+            serial_or_engine_no = VALUES(serial_or_engine_no),
+            location_site = VALUES(location_site),
             current_book_value = VALUES(current_book_value),
             status = VALUES(status),
             notes = VALUES(notes)
@@ -113,3 +123,5 @@ if ($method === 'POST') {
     logAudit($db, $user['id'], $user['name'], 'update', 'assets', $id, "ثبت/ویرایش دارایی: $name");
     jsonResponse(true, ['id' => $id, 'currentBookValue' => $bookValue], 'اطلاعات دارایی و ارزش دفتری با موفقیت ثبت شد.');
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

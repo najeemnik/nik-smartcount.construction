@@ -5,6 +5,11 @@
  */
 
 require_once __DIR__ . '/config.php';
+set_exception_handler(function (Throwable $e): void {
+    error_log('NSC request failed: ' . get_class($e) . ': ' . $e->getMessage());
+    if (!headers_sent()) header('Content-Type: application/json; charset=UTF-8');
+    jsonResponse(false, null, 'عملیات تکمیل نشد؛ گزارش خطای سرور را بررسی کنید.', 500);
+});
 
 class Database {
     private static ?PDO $instance = null;
@@ -58,15 +63,17 @@ function jsonResponse($successOrPayload, $dataOrStatus = null, ?string $error = 
  * خواندن امن ورودی JSON همراه با محدودیت حجم بدنه (حداکثر ۲۰ مگابایت)
  */
 function getJsonInput(): array {
-    $raw = file_get_contents('php://input');
-    if ($raw === false || $raw === '') {
-        return [];
-    }
-    if (strlen($raw) > 20 * 1024 * 1024) {
-        jsonResponse(false, null, 'حجم درخواست ارسالی بیش از حد مجاز است.', 413);
-    }
+    $stream = fopen('php://input', 'rb');
+    $raw = $stream ? stream_get_contents($stream, 21 * 1024 * 1024 + 1) : false;
+    if ($stream) fclose($stream);
+    if ($raw === false) jsonResponse(false, null, 'خواندن درخواست ناکام شد.', 400);
+    if ($raw === '') return [];
+    if (strlen($raw) > 21 * 1024 * 1024) jsonResponse(false, null, 'حجم درخواست بیش از حد مجاز است.', 413);
     $decoded = json_decode($raw, true);
-    return is_array($decoded) ? $decoded : [];
+    if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded) || substr(ltrim($raw), 0, 1) !== '{') {
+        jsonResponse(false, null, 'بدنهٔ درخواست باید یک شیء JSON معتبر باشد.', 400);
+    }
+    return $decoded;
 }
 
 function getJsonBody(): array {
@@ -206,127 +213,10 @@ function resolveModuleAliases(string $module): array {
     return $map[$m] ?? [$m];
 }
 
+require_once __DIR__ . '/permissions.php';
 function assertModulePermission(array $user, string $module, string $action = 'view', ?string $projectId = null): void {
-    // Only Master Super Admin (Office 7) is unconditionally exempt
-    if ((int)($user['is_master'] ?? 0) === 1) {
-        return;
-    }
-
-    if ((int)($user['is_locked'] ?? 0) === 1 || (array_key_exists('is_active', $user) && (int)$user['is_active'] === 0)) {
-        jsonResponse(false, null, 'حساب کاربری شما غیرفعال یا مسدود شده است.', 403);
-    }
-
-    if (!empty($user['_tenant_owner'])) {
-        assertModulePermission($user['_tenant_owner'], $module, $action, $projectId);
-    }
-
-    $role = strtolower(trim((string)($user['role'] ?? 'viewer')));
-    if ($role === 'viewer' && $action !== 'view') jsonResponse(false, null, 'حساب مشاهده‌کننده اجازهٔ تغییر ندارد.', 403);
-    $aliases = resolveModuleAliases($module);
-
-    // 1. Check Office 7 per-user customEnabledModules (allowed_modules_json) — applies to BOTH admin & staff
-    if (!empty($user['allowed_modules_json'])) {
-        $mods = is_string($user['allowed_modules_json'])
-            ? json_decode($user['allowed_modules_json'], true)
-            : $user['allowed_modules_json'];
-        if (is_array($mods)) {
-            foreach ($aliases as $alias) {
-                if (array_key_exists($alias, $mods) && $mods[$alias] === false) {
-                    jsonResponse(false, null, "دسترسی به بخش «{$module}» توسط مدیریت ارشد (دفتر هفت) برای حساب شما غیرفعال شده است.", 403);
-                }
-            }
-        }
-    }
-
-    // 1b. Check Office 7 allowed_tabs_json if configured as an explicit whitelist
-    if (!empty($user['allowed_tabs_json'])) {
-        $tabs = is_string($user['allowed_tabs_json'])
-            ? json_decode($user['allowed_tabs_json'], true)
-            : $user['allowed_tabs_json'];
-        if (is_array($tabs) && count($tabs) > 0) {
-            $tabMatch = false;
-            foreach ($aliases as $alias) {
-                if (in_array($alias, $tabs, true)) {
-                    $tabMatch = true;
-                    break;
-                }
-            }
-            if (!$tabMatch && in_array($module, ['dashboard', 'projects', 'documents', 'steel', 'concrete', 'expenses', 'contractors', 'labor', 'suppliers', 'assets', 'apartments', 'payments', 'exchange', 'budget', 'reports', 'accounting', 'users', 'settings', 'audit_logs', 'auditLogs'], true)) {
-                jsonResponse(false, null, "دسترسی به تب «{$module}» برای حساب شما غیرفعال است.", 403);
-            }
-        }
-    }
-
-    // Company owners (role=admin) have full access to all modules that were NOT disabled for them by Office 7
-    if ($role === 'admin') {
-        return;
-    }
-
-    // 2. Check explicit projectGrants inside app_profile_json if present
-    if (!empty($user['app_profile_json'])) {
-        $profile = is_string($user['app_profile_json'])
-            ? json_decode($user['app_profile_json'], true)
-            : $user['app_profile_json'];
-        if (is_array($profile) && !empty($profile['projectGrants']) && is_array($profile['projectGrants'])) {
-            $grants = $profile['projectGrants'];
-            $relevant = [];
-            foreach ($grants as $g) {
-                $gPid = (string)($g['projectId'] ?? '');
-                if ($gPid === '*' || $projectId === null || $projectId === '' || $gPid === $projectId) {
-                    $relevant[] = $g;
-                }
-            }
-            if (empty($relevant)) {
-                jsonResponse(false, null, 'شما صلاحیت دسترسی به این پروژه را ندارید.', 403);
-            }
-            $viewOk = false;
-            $actOk = false;
-            foreach ($relevant as $g) {
-                foreach ($aliases as $alias) {
-                    if (!empty($g['sections'][$alias]['view'])) {
-                        $viewOk = true;
-                    }
-                    if (!empty($g['sections'][$alias][$action])) {
-                        $actOk = true;
-                    }
-                }
-            }
-            if (!$viewOk || ($action !== 'view' && !$actOk)) {
-                jsonResponse(false, null, "شما صلاحیت انجام عملیات «{$action}» در بخش «{$module}» را ندارید.", 403);
-            }
-            return;
-        }
-    }
-
-    // 3. Check explicit permissions_json
-    if (!empty($user['permissions_json'])) {
-        $perms = is_string($user['permissions_json'])
-            ? json_decode($user['permissions_json'], true)
-            : $user['permissions_json'];
-        if (is_array($perms)) {
-            foreach ($aliases as $alias) {
-                if (isset($perms[$alias]) && is_array($perms[$alias])) {
-                    if (array_key_exists('view', $perms[$alias]) && $perms[$alias]['view'] === false) {
-                        jsonResponse(false, null, "شما صلاحیت مشاهده بخش «{$module}» را ندارید.", 403);
-                    }
-                    if (array_key_exists($action, $perms[$alias]) && $perms[$alias][$action] === false) {
-                        jsonResponse(false, null, "شما صلاحیت عملیات «{$action}» در بخش «{$module}» را ندارید.", 403);
-                    }
-                    if (!empty($perms[$alias][$action])) {
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    if (!in_array($role, ['viewer', 'accountant', 'project_manager', 'procurement'], true)) {
-        jsonResponse(false, null, 'نقش کاربری معتبر نیست.', 403);
-    }
-
-    // 4. Role fallback: viewer is strictly read-only; accountant can view/create/edit/del/print/export (not approve)
-    if ($role === 'viewer' && $action !== 'view') {
-        jsonResponse(false, null, 'حساب کاربری مشاهده‌گر (Viewer) اجازه ثبت، ویرایش یا حذف اطلاعات را ندارد.', 403);
+    if (!canAccessModule($user, $module, $action, $projectId, $projectId === null && $action === 'view')) {
+        jsonResponse(false, null, 'صلاحیت این عملیات یا پروژه را ندارید.', 403);
     }
 }
 
@@ -435,23 +325,35 @@ function enforceIdempotencyGuard(PDO $db, array $user, string $module, array $pa
         $idemKey = 'fp-' . substr(hash('sha256', $userId . '|' . $method . '|' . $module . '|' . json_encode($payload)), 0, 40);
         $windowSeconds = 2;
     } else {
-        $idemKey = 'ik-' . substr(preg_replace('/[^a-zA-Z0-9_\-:.]/', '', $idemKey), 0, 80);
+        $idemKey = 'ik-' . hash('sha256', $idemKey);
         $windowSeconds = 60;
     }
 
-    $lockDir = sys_get_temp_dir() . '/nsc_idempotency';
-    if (!is_dir($lockDir)) {
-        @mkdir($lockDir, 0700, true);
+    $lockDir = sys_get_temp_dir() . '/nsc_idempotency_' . substr(hash('sha256', DB_HOST . ':' . DB_NAME), 0, 16);
+    if (!is_dir($lockDir) && !mkdir($lockDir, 0700, true) && !is_dir($lockDir)) {
+        jsonResponse(false, null, 'محافظ ثبت تکراری در دسترس نیست.', 503);
     }
-    $lockFile = $lockDir . '/' . hash('sha256', $userId . '::' . $idemKey) . '.lock';
-    $now = time();
-    if (is_file($lockFile)) {
-        $mtime = (int)@filemtime($lockFile);
-        if ($mtime > 0 && ($now - $mtime) < $windowSeconds) {
-            jsonResponse(false, null, 'این درخواست هم‌اکنون ثبت شده یا در حال پردازش است (جلوگیری از ثبت تکراری).', 409);
-        }
+    $lockFile = $lockDir . '/' . hash('sha256', $userId . '::' . $module . '::' . $idemKey) . '.lock';
+    $handle = fopen($lockFile, 'c+');
+    if (!$handle) jsonResponse(false, null, 'محافظ ثبت تکراری در دسترس نیست.', 503);
+    if (!flock($handle, LOCK_EX | LOCK_NB)) {
+        fclose($handle);
+        jsonResponse(false, null, 'این درخواست در حال پردازش است.', 409);
     }
-    @file_put_contents($lockFile, (string)$now, LOCK_EX);
+    $lastSuccess = (int)stream_get_contents($handle);
+    if ($lastSuccess > 0 && time() - $lastSuccess < $windowSeconds) {
+        flock($handle, LOCK_UN); fclose($handle);
+        jsonResponse(false, null, 'این درخواست قبلاً ثبت شده است.', 409);
+    }
+    // Hold the lock until the response completes. Failed validation must remain retryable.
+    register_shutdown_function(function () use ($handle) {
+        $lastError = error_get_last();
+        $fatal = $lastError && in_array($lastError['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true);
+        $status = http_response_code() ?: 200;
+        rewind($handle); ftruncate($handle, 0);
+        fwrite($handle, (!$fatal && $status < 400) ? (string)time() : '0');
+        fflush($handle); flock($handle, LOCK_UN); fclose($handle);
+    });
 }
 
 /**
@@ -499,6 +401,7 @@ function generateToken(string $userId, string $role, int $isMaster, int $tokenVe
  * بررسی صحت توکن HMAC (پشتیبانی از هر دو فرمت Base64URL و Base64 استاندارد برای سازگاری عقب‌رو)
  */
 function verifyToken(string $token): ?array {
+    if (strlen($token) > 4096) return null;
     $parts = explode('.', $token);
     if (count($parts) !== 3) return null;
 
@@ -511,9 +414,11 @@ function verifyToken(string $token): ?array {
         return null; // امضا مخدوش است
     }
 
+    $decodedHeader = json_decode(base64UrlDecode($header), true);
+    if (!is_array($decodedHeader) || ($decodedHeader['alg'] ?? '') !== 'HS256' || ($decodedHeader['typ'] ?? '') !== 'JWT') return null;
     $decodedPayload = base64UrlDecode($payload);
     $data = json_decode($decodedPayload, true);
-    if (!$data || !isset($data['exp']) || $data['exp'] < time()) {
+    if (!is_array($data) || !isset($data['exp'], $data['user_id']) || !is_int($data['exp']) || $data['exp'] <= time() || !is_string($data['user_id']) || $data['user_id'] === '' || strlen($data['user_id']) > 64 || (isset($data['ver']) && !is_int($data['ver']))) {
         return null; // توکن منقضی شده
     }
 

@@ -7,6 +7,8 @@ if(($_GET['action']??'')==='upgrade' && ($_SERVER['REQUEST_METHOD']??'GET')==='P
   $columns=$db->query('SHOW COLUMNS FROM form_drafts')->fetchAll(PDO::FETCH_COLUMN);
   if(!in_array('client_draft_key',$columns,true))$db->exec('ALTER TABLE form_drafts ADD COLUMN client_draft_key VARCHAR(255) NULL AFTER draft_key');
   foreach(['subcontractors','suppliers'] as $table){$columns=$db->query('SHOW COLUMNS FROM '.$table)->fetchAll(PDO::FETCH_COLUMN);if(!in_array('tenant_id',$columns,true))$db->exec('ALTER TABLE '.$table.' ADD COLUMN tenant_id VARCHAR(64) NULL AFTER id');}
+  $columns=$db->query('SHOW COLUMNS FROM material_procurements')->fetchAll(PDO::FETCH_COLUMN);
+  if(!in_array('received_by',$columns,true))$db->exec('ALTER TABLE material_procurements ADD COLUMN received_by VARCHAR(150) NULL');
   logAudit($db,$user['id'],$user['name'],'upgrade','system',null,'Additive schema upgrade; no rows deleted.');
   jsonResponse(true,['upgraded'=>true],'ساختار بدون حذف معلومات به‌روز شد.');
  }catch(Throwable $e){error_log('NSC upgrade: '.$e->getMessage());jsonResponse(false,null,'ارتقا تکمیل نشد. گزارش هاست را بررسی کنید؛ هیچ دستور حذف اجرا نشده است.',500);}

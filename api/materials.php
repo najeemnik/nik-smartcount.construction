@@ -7,6 +7,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 
+require_once __DIR__.'/report-data.php';
 sendSecurityHeaders();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -76,7 +77,7 @@ function ensurePhase3RebarTables(PDO $db): void {
  * Upsert a rebar specification weight per bar in rebar_spec_memory
  * Key: diameter_mm||length_m||LOWER(brand_spec) (never assumes diameter alone determines weight)
  */
-function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy = 'Admin'): array {
+function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy, array $actor): array {
     $diameterMm = round((float)($spec['diameterMm'] ?? $spec['diameter_mm'] ?? 0), 2);
     $lengthM = round((float)($spec['lengthM'] ?? $spec['length_m'] ?? 12), 2);
     $brandSpec = trim((string)($spec['brandSpec'] ?? $spec['brand_spec'] ?? 'عمومی')) ?: 'عمومی';
@@ -87,11 +88,13 @@ function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy = 'Admin'):
         return ['saved' => false];
     }
 
-    $specKey = $diameterMm . '||' . $lengthM . '||' . mb_strtolower($brandSpec, 'UTF-8');
+    assertTenantProjectAccess($db,$projectId,currentTenantId($actor));
+    $specKey = hash('sha256', currentTenantId($actor).'|'.$projectId.'|'.$diameterMm.'|'.$lengthM.'|'.mb_strtolower($brandSpec,'UTF-8'));
     $findStmt = $db->prepare("SELECT * FROM rebar_spec_memory WHERE spec_key = :skey LIMIT 1");
     $findStmt->execute([':skey' => $specKey]);
     $existing = $findStmt->fetch();
 
+    assertModulePermission($actor,'steel',$existing?'edit':'create',(string)$projectId);
     if ($existing) {
         $origWeight = (float)$existing['original_weight_per_bar_kg'] > 0
             ? (float)$existing['original_weight_per_bar_kg']
@@ -130,7 +133,7 @@ function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy = 'Admin'):
         ];
     }
 
-    $id = $spec['id'] ?? ('rbs-' . substr(md5($specKey), 0, 16));
+    $id = 'rbs-' . substr($specKey, 0, 48);
     $initialHistory = [[
         'weightPerBarKg' => $weightPerBarKg,
         'effectiveDate' => date('Y-m-d'),
@@ -165,6 +168,8 @@ function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy = 'Admin'):
 ensurePhase3RebarTables($db);
 
 if ($method === 'GET') {
+    requireScopedProject($user, 'materials', $_GET['projectId'] ?? null);
+
     // Phase 3 — TASK 1: GET saved rebar specifications and weights per bar
     if (isset($_GET['action']) && $_GET['action'] === 'rebar_specs') {
         $projectId = $_GET['projectId'] ?? null;
@@ -179,10 +184,10 @@ if ($method === 'GET') {
 
         $sql = "SELECT r.* FROM rebar_spec_memory r
                 LEFT JOIN projects p ON r.project_id = p.id
-                WHERE (r.project_id IS NULL OR p.tenant_id = :tid)";
+                WHERE p.tenant_id = :tid";
         $params = [':tid' => $tenantId];
         if ($projectId) {
-            $sql .= " AND (r.project_id = :pid OR r.project_id IS NULL)";
+            $sql .= " AND r.project_id = :pid";
             $params[':pid'] = $projectId;
         }
         if ($diameter !== null && $diameter > 0) {
@@ -211,23 +216,7 @@ if ($method === 'GET') {
         }
         assertModulePermission($user, 'steel', 'view', $projectId ? (string)$projectId : null);
 
-        $sql = "SELECT s.* FROM steel_records s
-                INNER JOIN projects p ON s.project_id = p.id
-                WHERE p.tenant_id = :tid";
-        $params = [':tid' => $tenantId];
-        if ($projectId) {
-            $sql .= " AND s.project_id = :pid";
-            $params[':pid'] = $projectId;
-        }
-        $sql .= " ORDER BY s.date DESC, s.created_at DESC";
-        $rows = [];
-        try {
-            $stmt = $db->prepare($sql);
-            $stmt->execute($params);
-            $rows = $stmt->fetchAll();
-        } catch (Throwable $e) {
-            $rows = [];
-        }
+        $rows=steelReportRows($db,$tenantId,$projectId);
 
         $totalWeightKg = 0.0;
         $totalWeightTon = 0.0;
@@ -294,9 +283,9 @@ if ($method === 'GET') {
     }
 
     $projectId = $_GET['projectId'] ?? null;
-    $sql = "SELECT m.*, p.name as project_name, s.supplier_name as supplier_official_name 
-            FROM material_procurements m 
-            LEFT JOIN projects p ON m.project_id = p.id 
+    $sql = "SELECT m.*, p.name as project_name, s.supplier_name as supplier_official_name
+            FROM material_procurements m
+            LEFT JOIN projects p ON m.project_id = p.id
             LEFT JOIN suppliers s ON m.supplier_id = s.id";
     $params = ['tid' => $tenantId];
     $sql .= " WHERE m.tenant_id = :tid";
@@ -324,7 +313,7 @@ if ($method === 'POST') {
 
     // Phase 3 — TASK 1: Save or update rebar specification weight per bar
     if ((isset($_GET['action']) && $_GET['action'] === 'rebar_specs') || (($input['action'] ?? '') === 'save_rebar_spec')) {
-        $res = upsertRebarSpecInDb($db, $input, $user['name'] ?? 'Admin');
+        $res = upsertRebarSpecInDb($db, $input, $user['name'] ?? 'Admin', $user);
         if (empty($res['saved'])) {
             jsonResponse(false, null, 'قطر، طول و وزن یک شاخه (kg) معتبر الزامی است.', 422);
         }
@@ -345,6 +334,27 @@ if ($method === 'POST') {
     $date = !empty($input['purchaseDate']) ? $input['purchaseDate'] : date('Y-m-d');
     $isPaid = !empty($input['isPaid']) ? 1 : 0;
     $lineItems = is_array($input['lineItems'] ?? null) ? $input['lineItems'] : [];
+    $currency=strtoupper((string)($input['currency']??($lineItems[0]['currency']??'AFN')));
+    $rate=(float)($input['exchangeRate']??($currency==='AFN'?1:0));
+    if(!in_array($currency,['AFN','USD'],true)||!is_finite($rate)||$rate<=0)jsonResponse(false,null,'اسعار و نرخ تبدیل معتبر الزامی است.',400);
+    $estimatedKg=0.0;$confirmedTon=0.0;
+    if($lineItems){
+        $totalPrice=0.0;
+        foreach($lineItems as $line){
+            if(!is_array($line) || strtoupper((string)($line['currency']??$currency))!==$currency)jsonResponse(false,null,'اسعار تمام ردیف‌های خرید باید یکسان باشد.',400);
+            $bars=!empty($line['useBundles'])?(int)($line['bundleCount']??0)*(int)($line['barsPerBundle']??0):(int)($line['barCount']??0);
+            $weight=(float)($line['weightPerBarKg']??0);$price=(float)($line['pricePerTon']??0);
+            if($bars<=0||$weight<=0||$price<=0||(float)($line['diameterMm']??0)<=0)jsonResponse(false,null,'تعداد، وزن، قطر و قیمت ردیف سیخ معتبر نیست.',400);
+            $kg=round($bars*$weight,3);$ton=!empty($line['actualWeightTon'])?(float)$line['actualWeightTon']:round($kg/1000,4);
+            if(!is_finite($ton)||$ton<=0)jsonResponse(false,null,'تناژ معتبر نیست.',400);
+            $estimatedKg+=$kg;$confirmedTon+=$ton;$totalPrice+=round($ton*$price,2);
+        }
+        $qty=round($confirmedTon,4);$unit='ton';$unitPrice=round($totalPrice/$qty,2);
+    } elseif(in_array(strtolower((string)$category),['steel','rebar'],true)) {
+        $confirmedTon=(float)($input['confirmedTotalTon']??$input['tons']??$qty);$estimatedKg=$confirmedTon*1000;
+    }
+    $totalPrice=round($totalPrice,2);$baseTotal=$currency==='USD'?round($totalPrice*$rate,2):$totalPrice;
+
 
     if (empty($projectId) || empty($materialName) || $qty <= 0 || $unitPrice <= 0) {
         jsonResponse(false, null, 'پروژه، نام جنس، تعداد و قیمت واحد الزامی هستند.', 400);
@@ -375,7 +385,7 @@ if ($method === 'POST') {
                     recorded_by_user_id, description
                 ) VALUES (
                     :id, :tid, :vno, :pid, 'supplier', :sid, :sname,
-                    'materials', :amt, 'AFN', 1.0, :amt2,
+                    'materials', :amt, :curr, :rate, :amt2,
                     'cash', :dt, 'paid', 'مدیر تدارکات',
                     :uid, :desc
                 )
@@ -387,10 +397,10 @@ if ($method === 'POST') {
                 'pid' => $projectId,
                 'sid' => $supplierId,
                 'sname' => $supplierName,
-                'amt' => $totalPrice, 'amt2' => $totalPrice,
+                'amt' => $totalPrice, 'amt2' => $baseTotal, 'curr'=>$currency,'rate'=>$rate,
                 'dt' => $date,
                 'uid' => $user['id'],
-                'desc' => "خرید $qty $unit $materialName با قیمت واحد $unitPrice AFN"
+                'desc' => "خرید $qty $unit $materialName با قیمت واحد $unitPrice $currency"
             ]);
         }
 
@@ -399,13 +409,13 @@ if ($method === 'POST') {
             INSERT INTO material_procurements (
                 id, tenant_id, procurement_code, project_id, supplier_id, supplier_name,
                 material_category, item_description, quantity, unit_of_measure,
-                unit_price, total_cost, currency, is_paid, payment_voucher_id,
-                purchase_date, received_by, notes
+                unit_price, total_cost, currency, exchange_rate, confirmed_total_ton, estimated_total_kg, line_items_json, is_paid, payment_voucher_id,
+                purchase_date, invoice_no, received_by, notes
             ) VALUES (
                 :id, :tid, :code, :pid, :sid, :sname,
                 :cat, :item, :qty, :unit,
-                :uprice, :total, 'AFN', :paid, :pvid,
-                :pdate, :rec, :notes
+                :uprice, :total, :curr, :rate, :ton, :kg, :lines, :paid, :pvid,
+                :pdate, :invoice, :rec, :notes
             )
         ");
         $stmt->execute([
@@ -421,9 +431,11 @@ if ($method === 'POST') {
             'unit' => $unit,
             'uprice' => $unitPrice,
             'total' => $totalPrice,
+            'curr'=>$currency,'rate'=>$rate,'ton'=>$confirmedTon>0?$confirmedTon:null,'kg'=>$estimatedKg>0?$estimatedKg:null,'lines'=>json_encode($lineItems,JSON_UNESCAPED_UNICODE),
             'paid' => $isPaid,
             'pvid' => $paymentVoucherId,
             'pdate' => $date,
+            'invoice'=>$input['invoiceNo']??$input['billNumber']??null,
             'rec' => $input['receivedBy'] ?? $user['name'],
             'notes' => $input['notes'] ?? null
         ]);
@@ -497,28 +509,28 @@ if ($method === 'POST') {
                     'lengthM' => $l,
                     'brandSpec' => $b,
                     'weightPerBarKg' => $weightPerBarKg,
-                ], $user['name'] ?? 'Admin');
+                ], $user['name'] ?? 'Admin', $user);
             }
         }
 
         if (!empty($supplierId)) {
             $db->prepare("
-                UPDATE suppliers 
+                UPDATE suppliers
                 SET total_purchases = total_purchases + :tot,
                     total_paid = total_paid + :paid_amt,
                     current_payable_balance = current_payable_balance + :remain
                 WHERE id = :sid AND tenant_id = :tid
             ")->execute([
-                'tot' => $totalPrice,
-                'paid_amt' => $isPaid ? $totalPrice : 0,
-                'remain' => $isPaid ? 0 : $totalPrice,
+                'tot' => $baseTotal,
+                'paid_amt' => $isPaid ? $baseTotal : 0,
+                'remain' => $isPaid ? 0 : $baseTotal,
                 'sid' => $supplierId,
                 'tid' => $tenantId
             ]);
         }
 
         $db->commit();
-        logAudit($db, $user['id'], $user['name'], 'create', 'materials', $id, "ثبت خرید مواد: $materialName ($totalPrice AFN)");
+        logAudit($db, $user['id'], $user['name'], 'create', 'materials', $id, "ثبت خرید مواد: $materialName ($totalPrice $currency)");
         jsonResponse(true, ['id' => $id, 'procCode' => $procCode, 'totalCost' => $totalPrice], 'خرید مصالح با موفقیت ثبت و مستقیماً به هزینه پروژه متصل شد.');
     } catch (Exception $e) {
         $db->rollBack();
@@ -537,7 +549,8 @@ if ($method === 'PUT') {
         jsonResponse(false, null, 'شناسه رکورد خرید برای ویرایش الزامی است.', 422);
     }
 
-    $oldStmt = $db->prepare("SELECT * FROM material_procurements WHERE id = :id AND tenant_id = :tid LIMIT 1");
+    $db->beginTransaction();
+    $oldStmt = $db->prepare("SELECT * FROM material_procurements WHERE id = :id AND tenant_id = :tid LIMIT 1 FOR UPDATE");
     $oldStmt->execute([':id' => $id, ':tid' => $tenantId]);
     $old = $oldStmt->fetch();
     if (!$old) {
@@ -547,13 +560,15 @@ if ($method === 'PUT') {
     enforceIdempotencyGuard($db, $user, 'materials:put', $input);
 
     $supplierName = trim($input['supplierName'] ?? $old['supplier_name']);
-    $supplierId = $input['supplierId'] ?? $old['supplier_id'];
+    $supplierId = trim((string)($input['supplierId'] ?? $old['supplier_id'])) ?: null;
     $date = !empty($input['purchaseDate'] ?? $input['date']) ? ($input['purchaseDate'] ?? $input['date']) : $old['purchase_date'];
-    $billNo = trim($input['billNumber'] ?? $input['invoiceNumber'] ?? $old['bill_invoice_no'] ?? $old['procurement_code']);
+    $billNo = trim($input['billNumber'] ?? $input['invoiceNumber'] ?? $old['invoice_no'] ?? $old['bill_invoice_no'] ?? $old['procurement_code']);
     $currency = strtoupper(trim($input['currency'] ?? $old['currency'] ?? 'USD'));
     $notes = $input['notes'] ?? $old['notes'];
-    $lineItems = is_array($input['lineItems'] ?? null) ? $input['lineItems'] : [];
+    $lineItems = is_array($input['lineItems'] ?? null) ? $input['lineItems'] : (json_decode($old['line_items_json']??'[]',true)?:[]);
 
+    if(!in_array($currency,['AFN','USD'],true) || $currency!==$old['currency'])jsonResponse(false,null,'تغییر اسعار سند موجود مجاز نیست؛ سند اصلاحی بسازید.',400);
+    if($supplierId!==$old['supplier_id'])jsonResponse(false,null,'برای تغییر تأمین‌کنندهٔ سند ثبت‌شده، سند اصلاحی لازم است.',400);
     // Recalculate confirmed tonnage and total cost from lineItems (or top-level inputs)
     $confirmedTotalTon = 0.0;
     $totalNativeCost = 0.0;
@@ -581,11 +596,11 @@ if ($method === 'PUT') {
         $totalNativeCost = round($confirmedTotalTon * $unitPrice, 2);
     }
 
+    if(!is_finite($totalNativeCost)||$totalNativeCost<=0||$confirmedTotalTon<=0)jsonResponse(false,null,'مبلغ یا تناژ معتبر نیست.',400);
     $confirmedTotalTon = round($confirmedTotalTon, 4);
     $totalNativeCost = round($totalNativeCost, 2);
     $effectiveUnitPrice = $confirmedTotalTon > 0 ? round($totalNativeCost / $confirmedTotalTon, 2) : (float)$old['unit_price'];
 
-    $db->beginTransaction();
     try {
         // Update original material_procurements record in-place (preserving id)
         $updStmt = $db->prepare("
@@ -597,7 +612,9 @@ if ($method === 'PUT') {
                 unit_price = :uprice,
                 total_cost = :total,
                 currency = :curr,
-                bill_invoice_no = :bill,
+                invoice_no = :bill,
+                confirmed_total_ton = :ton,
+                line_items_json = :lines,
                 purchase_date = :pdate,
                 notes = :notes
             WHERE id = :id AND tenant_id = :tid
@@ -611,6 +628,7 @@ if ($method === 'PUT') {
             ':total' => $totalNativeCost,
             ':curr' => $currency,
             ':bill' => $billNo,
+            ':ton'=>$confirmedTotalTon,':lines'=>json_encode($lineItems,JSON_UNESCAPED_UNICODE),
             ':pdate' => $date,
             ':notes' => $notes,
             ':id' => $id,
@@ -686,7 +704,7 @@ if ($method === 'PUT') {
                     'lengthM' => $l,
                     'brandSpec' => $b,
                     'weightPerBarKg' => $weightPerBarKg,
-                ], $user['name'] ?? 'Admin');
+                ], $user['name'] ?? 'Admin', $user);
             }
         }
 
@@ -704,7 +722,7 @@ if ($method === 'PUT') {
                 ':sid' => $supplierId,
                 ':sname' => $supplierName,
                 ':amt' => $totalNativeCost,
-                ':amt2' => $totalNativeCost,
+                ':amt2' => $currency==='USD'?round($totalNativeCost*(float)$old['exchange_rate'],2):$totalNativeCost,
                 ':dt' => $date,
                 ':pvid' => $old['payment_voucher_id'],
                 ':tid' => $tenantId,
@@ -712,7 +730,7 @@ if ($method === 'PUT') {
         }
 
         // Adjust supplier running balance delta if supplier_id is present
-        $deltaCost = $totalNativeCost - (float)$old['total_cost'];
+        $deltaCost = ($totalNativeCost - (float)$old['total_cost']) * ($currency==='USD'?(float)$old['exchange_rate']:1);
         if (!empty($supplierId) && abs($deltaCost) > 0.001) {
             $isPaid = (int)$old['is_paid'] === 1;
             $db->prepare("
@@ -744,3 +762,5 @@ if ($method === 'PUT') {
         jsonResponse(false, null, 'خطا در ویرایش خرید در پایگاه داده.', 500);
     }
 }
+
+jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

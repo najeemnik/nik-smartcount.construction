@@ -2,7 +2,7 @@
 /**
  * NSC ERP & Construction Finance System
  * Shahhost Server Configuration (SSD Silver Package)
- * 
+ *
  * تمام مقادیر اتصال دیتابیس را طبق اطلاعاتی که در cPanel هاست ساختید تنظیم کنید.
  */
 
@@ -28,6 +28,7 @@ define('DB_CHARSET','utf8mb4');unset($nscDatabase);
 if (!defined('JWT_SECRET_KEY')) {
     $envSecret = getenv('JWT_SECRET') ?: '';
     if ($envSecret !== '') {
+        if(strlen($envSecret)<32)throw new RuntimeException('JWT_SECRET must contain at least 32 bytes.');
         define('JWT_SECRET_KEY', $envSecret);
     } else {
         $secretDir = __DIR__ . '/.secrets';
@@ -69,7 +70,7 @@ function sendSecurityHeaders() {
     header("Content-Security-Policy: default-src 'none'; frame-ancestors 'self'");
     header("Content-Type: application/json; charset=UTF-8");
     header("Cache-Control: no-store, private");
-    
+
     // هدرهای CORS — فقط برای آدرس‌های مجاز در ALLOWED_ORIGINS (پیش‌فرض: بسته)
     // درخواست‌های same-origin بدون این هدرها هم کار می‌کنند.
     $allowedOrigins = array_filter(array_map('trim', explode(',', getenv('ALLOWED_ORIGINS') ?: '')));
@@ -108,10 +109,14 @@ function enforceCsrfAndOriginGuard(array $allowedOrigins = []): void {
     $origin = trim((string)($_SERVER['HTTP_ORIGIN'] ?? ''));
     $host = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? '')));
     if ($origin !== '') {
-        $originHost = strtolower((string)(parse_url($origin, PHP_URL_HOST) ?? ''));
-        $originPort = parse_url($origin, PHP_URL_PORT);
-        $originHostWithPort = $originPort ? "{$originHost}:{$originPort}" : $originHost;
-        $sameHost = ($host !== '' && ($originHost === $host || $originHostWithPort === $host));
+        $originParts = parse_url($origin);
+        $originHost = strtolower((string)($originParts['host'] ?? ''));
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $requestParts = parse_url($scheme.'://'.$host);
+        $originScheme = strtolower((string)($originParts['scheme'] ?? ''));
+        $originPort = $originParts['port'] ?? ($originScheme === 'https' ? 443 : 80);
+        $requestPort = $requestParts['port'] ?? ($scheme === 'https' ? 443 : 80);
+        $sameHost = $originHost !== '' && $originHost === strtolower((string)($requestParts['host'] ?? '')) && $originScheme === $scheme && $originPort === $requestPort;
         if (!$sameHost && !in_array($origin, $allowedOrigins, true)) {
             http_response_code(403);
             echo json_encode([
