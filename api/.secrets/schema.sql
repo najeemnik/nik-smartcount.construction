@@ -347,6 +347,7 @@ CREATE TABLE IF NOT EXISTS `material_procurements` (
 CREATE TABLE IF NOT EXISTS `rebar_spec_memory` (
   `id` VARCHAR(64) NOT NULL PRIMARY KEY,
   `project_id` VARCHAR(64) NULL,
+  `tenant_id` VARCHAR(64) NULL,
   `diameter_mm` DECIMAL(10, 2) NOT NULL,
   `length_m` DECIMAL(10, 2) NOT NULL DEFAULT 12.00,
   `brand_spec` VARCHAR(150) NOT NULL DEFAULT 'عمومی',

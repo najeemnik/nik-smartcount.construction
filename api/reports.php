@@ -413,7 +413,7 @@ if ($reportType === 'drilldown' || $reportType === 'transaction_detail') {
                 if ($kg <= 0 && $ton > 0) $kg = round($ton * 1000, 3);
 
                 $currency = strtoupper(trim((string)($r['currency'] ?? 'USD'))) ?: 'USD';
-                $exRate = isset($r['exchange_rate']) && (float)$r['exchange_rate'] > 0 ? (float)$r['exchange_rate'] : 70.0;
+                $exRate = isset($r['exchange_rate']) && (float)$r['exchange_rate'] > 0 ? (float)$r['exchange_rate'] : NSC_DEFAULT_EXCHANGE_RATE;
                 $nativeCost = (float)($r['total_native_cost'] ?? ($currency === 'AFN' ? ($r['amount_in_afn'] ?? 0) : ($r['total_amount'] ?? 0)));
                 $costUSD = $currency === 'USD'
                     ? round((float)($r['amount_in_usd'] ?? $r['total_amount'] ?? $nativeCost), 2)

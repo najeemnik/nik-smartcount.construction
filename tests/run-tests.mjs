@@ -424,6 +424,93 @@ echo json_encode($out, JSON_UNESCAPED_UNICODE), "\\n";`;
     splitBad.length ? `مورد ${splitBad.map((r) => `${r.want}!=${r.got}`).join(',')}` : '۴ سناریو (رشته، escape، بک‌تیک)');
 
   /* ---------------- ۶. یکپارچگی دفتر حساب‌ها ---------------- */
+  section('۵ب) جداسازی دادهٔ شرکت‌ها در حافظهٔ مشخصات میلگرد');
+
+  // خودِ تابع upsertRebarSpecInDb از materials.php استخراج و اجرا می‌شود
+  // (نه بازنویسی) تا رفتار واقعی سنجیده شود.
+  const matSrc = readFileSync(join(ROOT, 'api/materials.php'), 'utf8');
+  const fnStart = matSrc.indexOf('function upsertRebarSpecInDb(');
+  const fnEnd = matSrc.indexOf('\n}\n', matSrc.indexOf('return [\n        \'saved\' => true,\n        \'id\' => $id', fnStart));
+  const fnSrc = matSrc.slice(fnStart, fnEnd + 2);
+
+  const isolationTest = `<?php
+require '/app/api/db.php';
+${fnSrc}
+
+/** PDO جعلی: فقط آخرین INSERT/UPDATE و پارامترهایش را نگه می‌دارد. */
+class RecStmt {
+  public array $params = [];
+  private $row;
+  public function __construct($row = false) { $this->row = $row; }
+  public function execute($p = []) { $this->params = $p; return true; }
+  public function fetch() { return $this->row; }
+  public function fetchAll() { return []; }
+}
+class RecPDO extends PDO {
+  public array $calls = [];
+  public function __construct() {}
+  public function prepare(string $sql, array $o = []) {
+    $this->calls[] = $sql;
+    return new RecStmt(false);   // هیچ ردیف موجودی نیست → مسیر INSERT
+  }
+}
+
+$spec = ['diameterMm' => 16, 'lengthM' => 12, 'brandSpec' => 'Opium', 'weightPerBarKg' => 18.9];
+$seen = [];
+foreach (['tenant-A', 'tenant-B'] as $tid) {
+  $db = new RecPDO();
+  $r = upsertRebarSpecInDb($db, $spec, 'Tester', $tid);
+  $ins = null;
+  foreach ($db->calls as $q) { if (stripos($q, 'INSERT INTO rebar_spec_memory') !== false) $ins = $q; }
+  $seen[$tid] = ['key' => $r['spec_key'] ?? '', 'sql' => $ins];
+}
+echo json_encode([
+  'a' => $seen['tenant-A']['key'],
+  'b' => $seen['tenant-B']['key'],
+  'hasTenantCol' => strpos((string)$seen['tenant-A']['sql'], 'tenant_id') !== false,
+  'hasTidParam' => strpos((string)$seen['tenant-A']['sql'], ':tid') !== false,
+], JSON_UNESCAPED_UNICODE), "\\n";`;
+
+  const iso = await run(php, isolationTest);
+  let isoData = {};
+  try { isoData = JSON.parse(iso.out.trim().split('\n').pop()); } catch { /* ignore */ }
+  record('شرکت‌ها', 'کلید مشخصات میلگرد بین شرکت‌ها یکتا نیست',
+    isoData.a && isoData.b && isoData.a !== isoData.b && isoData.a.startsWith('tenant-A'),
+    `A=${isoData.a || '?'} · B=${isoData.b || '?'}`);
+  record('شرکت‌ها', 'نوشتن حافظهٔ میلگرد شرکت را ثبت می‌کند',
+    isoData.hasTenantCol === true && isoData.hasTidParam === true,
+    `ستون tenant_id=${isoData.hasTenantCol} پارامتر=${isoData.hasTidParam}`);
+
+  // خواندن باید فیلتر شرکت داشته باشد
+  const readQuery = (matSrc.match(/SELECT r\.\* FROM rebar_spec_memory[\s\S]{0,260}?WHERE[^";]*/) || [''])[0];
+  record('شرکت‌ها', 'کوئری خواندن حافظهٔ میلگرد به شرکت محدود است',
+    /r\.tenant_id\s*=\s*:tid/.test(readQuery), readQuery ? 'شرط tenant_id موجود' : 'کوئری پیدا نشد');
+  record('شرکت‌ها', 'به‌روزرسانی فقط ردیف شرکت خودی را می‌نویسد',
+    /UPDATE rebar_spec_memory[\s\S]*?WHERE id = :id AND \(tenant_id = :tid OR tenant_id IS NULL\)/.test(matSrc),
+    'گارد مالکیت در WHERE');
+
+  section('۵ج) نرخ ارز پیش‌فرض یک‌جا تعریف می‌شود');
+
+  const rateTest = `<?php
+require '/app/api/config.php';
+echo json_encode([
+  'defined' => defined('NSC_DEFAULT_EXCHANGE_RATE'),
+  'value' => defined('NSC_DEFAULT_EXCHANGE_RATE') ? NSC_DEFAULT_EXCHANGE_RATE : null,
+  'type' => defined('NSC_DEFAULT_EXCHANGE_RATE') ? gettype(NSC_DEFAULT_EXCHANGE_RATE) : null,
+], JSON_UNESCAPED_UNICODE), "\\n";`;
+  const rt = await run(php, rateTest);
+  let rtData = {};
+  try { rtData = JSON.parse(rt.out.trim().split('\n').pop()); } catch { /* ignore */ }
+  record('نرخ ارز', 'ثابت NSC_DEFAULT_EXCHANGE_RATE تعریف شده و عددی است',
+    rtData.defined === true && rtData.type === 'double' && rtData.value > 0,
+    `مقدار=${rtData.value} نوع=${rtData.type}`);
+
+  // هیچ عدد جادویی ۷۰ نباید در محاسبات باقی مانده باشد
+  const magic = ['api/finance.php', 'api/reports.php']
+    .filter((f) => /(?:\?|:)\s*70\.0\b|:\s*70\.0\)/.test(readFileSync(join(ROOT, f), 'utf8')));
+  record('نرخ ارز', 'عدد ۷۰ در محاسبات مالی هاردکد نمانده', magic.length === 0,
+    magic.length ? `باقی‌مانده در: ${magic.join(', ')}` : 'finance.php و reports.php از ثابت استفاده می‌کنند');
+
   section('۶) یکپارچگی seed دفتر حساب‌ها (۱۸۷ حساب)');
   const chart = checkChartSeed();
   record('حساب‌ها', '۱۸۷ حساب با کد یکتا (دفتر کلاینت)', chart.count === 187 && chart.unique === 187 && chart.dupes.length === 0,
@@ -522,6 +609,28 @@ ${new Date().toISOString().slice(0, 16).replace('T', ' ')}</div>
 PHP با <code>EXPLAIN</code> سنجیده می‌شود — خطاهای «جدول/ستون وجود ندارد» واقعی‌اند.<br><br>
 <b>آنچه هنوز تست نشده:</b> رفتار مخصوص MySQL (ENUM، InnoDB، قواعد دقیق DECIMAL، قفل‌ها)
 که DuckDB شبیه‌سازی می‌کند نه اجرا؛ کلاینت مرورگری؛ و همزمانی.
+</div>
+<h2 style="font-size:17px;margin:26px 0 6px">رفع آسیب‌پذیری‌های باقی‌مانده (این دور)</h2>
+<div class="note" style="border-inline-start-color:#38b6a0">
+<b>۱. نشتی دادهٔ بین شرکت‌ها در <code>rebar_spec_memory</code> (جدی‌ترین).</b>
+<code>spec_key</code> سراسری یکتا بود (<code>diameter||length||brand</code>) و جست‌وجوی upsert هم
+هیچ فیلتری روی شرکت نداشت. یعنی شرکت ب با ذخیرهٔ وزن مرجع میلگرد، <b>ردیف شرکت الف را بازنویسی
+می‌کرد</b> و محاسبهٔ وزن پروژه‌های او بی‌خبر تغییر می‌کرد. ← کلید اکنون با شناسهٔ شرکت پیشوند
+می‌گیرد، نوشتن با <code>WHERE id = :id AND (tenant_id = :tid ...)</code> محدود شده و
+ستون <code>tenant_id</code> با یک ALTER افزودنی به نصب‌های موجود اضافه می‌شود.
+<b>۴ تست اجرایی</b> این جداسازی را ثابت می‌کند.<br><br>
+<b>۲. TOCTOU در محدودیت تلاش ورود.</b>
+شمارش تلاش‌ها و درج آن‌ها دو عملیات جدا بودند؛ N درخواست هم‌زمان همه عدد «۹» را می‌دیدند و
+همه رد می‌شدند، پس سقف با ارسال موازی دور زده می‌شد. ← <code>nscRecordLoginAttempt()</code>
+شمارش و درج را زیر یک قفل نام‌دار MySQL (<code>GET_LOCK</code>) انجام می‌دهد؛ وقتی سقف پر
+شود پاسخ <code>429</code> است.<br><br>
+<b>۳. نرخ ارز هاردکد.</b>
+عدد <code>70.0</code> در سه فایل تکرار شده بود؛ اگر نرخ بازار عوض می‌شد گزارش‌های مالی
+بی‌خبر با نرخ قدیمی محاسبه می‌شدند. ← ثابت <code>NSC_DEFAULT_EXCHANGE_RATE</code> در
+<code>config.php</code> (قابل تنظیم با متغیر محیطی).<br><br>
+<b>آنچه عمداً تغییر نکرد:</b> حلقه‌های ۲ مرحله‌ای بررسی مالکیت در
+<code>finance.php</code>/<code>office7.php</code>/<code>workspace.php</code> در واقع N+1
+نیستند و تغییرشان فقط ریسک دارد. مورد <code>localStorage</code> بدون سورس باندل قابل رفع نیست.
 </div>
 <h2 style="font-size:17px;margin:26px 0 6px">یافته‌های همین اجرا (سه باگ واقعی که با تست اجرایی پیدا شد)</h2>
 <div class="note" style="border-inline-start-color:#e6a23c">

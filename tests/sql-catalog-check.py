@@ -367,7 +367,16 @@ def main():
                 con.execute("EXPLAIN " + dql)
             except Exception as e:
                 msg = str(e)
-                if "does not exist" in msg or "not found in FROM clause" in msg or "Referenced column" in msg:
+                # فقط خطاهای مربوط به «جدول/ستون» یافتهٔ واقعی‌اند.
+                # نبودن توابع مخصوص MySQL (GET_LOCK، RELEASE_LOCK، ...) در DuckDB
+                # ربطی به کاتالوگ برنامه ندارد و نباید گزارش شود.
+                is_catalog = (
+                    ("Table with name" in msg and "does not exist" in msg)
+                    or "not found in FROM clause" in msg
+                    or "Referenced column" in msg
+                    or "does not have a column named" in msg
+                )
+                if is_catalog:
                     result["problems"].append({"file": fname, "kind": kind,
                                                "sql": sql[:140].replace("\n", " "), "error": msg[:200]})
                 else:

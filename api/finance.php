@@ -128,7 +128,7 @@ if ($method === 'POST') {
         $date = !empty($input['date']) ? $input['date'] : date('Y-m-d');
         $currency = $input['currency'] ?? 'AFN';
         $rate = (float)($input['exchangeRate'] ?? 1.0);
-        $baseAmount = $currency === 'USD' ? ($amount * ($rate > 0 ? $rate : 70.0)) : $amount;
+        $baseAmount = $currency === 'USD' ? ($amount * ($rate > 0 ? $rate : NSC_DEFAULT_EXCHANGE_RATE)) : $amount;
 
         if (empty($projectId) || $amount <= 0 || empty($accountId)) {
             jsonResponse(false, null, 'پروژه، مبلغ و حساب مقصد الزامی هستند.', 400);
@@ -206,7 +206,7 @@ if ($method === 'POST') {
         $date = !empty($input['date']) ? $input['date'] : date('Y-m-d');
         $currency = $input['currency'] ?? 'AFN';
         $rate = (float)($input['exchangeRate'] ?? 1.0);
-        $baseAmount = $currency === 'USD' ? ($amount * ($rate > 0 ? $rate : 70.0)) : $amount;
+        $baseAmount = $currency === 'USD' ? ($amount * ($rate > 0 ? $rate : NSC_DEFAULT_EXCHANGE_RATE)) : $amount;
 
         if (empty($projectId) || $amount <= 0) {
             jsonResponse(false, null, 'مشخصات پروژه و مبلغ پرداختی الزامی است.', 400);

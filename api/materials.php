@@ -26,6 +26,7 @@ function ensurePhase3RebarTables(PDO $db): void {
             CREATE TABLE IF NOT EXISTS `rebar_spec_memory` (
               `id` VARCHAR(64) NOT NULL PRIMARY KEY,
               `project_id` VARCHAR(36) NULL,
+              `tenant_id` VARCHAR(64) NULL,
               `diameter_mm` DECIMAL(8, 2) NOT NULL,
               `length_m` DECIMAL(8, 2) NOT NULL DEFAULT 12.00,
               `brand_spec` VARCHAR(180) NOT NULL DEFAULT 'عمومی',
@@ -67,6 +68,20 @@ function ensurePhase3RebarTables(PDO $db): void {
               INDEX `idx_spl_proj_size` (`project_id`, `diameter_mm`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        // نصب‌های موجود: ستون tenant_id را افزودنی اضافه کن.
+        // CREATE TABLE IF NOT EXISTS روی جدول موجود کاری نمی‌کند، بنابراین بدون این
+        // ALTER نصب‌های فعلی هرگز ستون شرکت را نمی‌گرفتند.
+        // MySQL ندارد ADD COLUMN IF NOT EXISTS، پس خطای «ستون تکراری» (1060) را نادیده می‌گیریم.
+        try {
+            $cols = $db->query("SHOW COLUMNS FROM `rebar_spec_memory` LIKE 'tenant_id'")->fetchAll();
+            if (!$cols) {
+                $db->exec("ALTER TABLE `rebar_spec_memory` ADD COLUMN `tenant_id` VARCHAR(64) NULL AFTER `project_id`");
+                $db->exec("ALTER TABLE `rebar_spec_memory` ADD INDEX `idx_rsm_tenant` (`tenant_id`)");
+            }
+        } catch (Throwable $e) {
+            // اگر هاست اجازهٔ ALTER ندهد، خواندن/نوشتن با spec_key پیشوند‌دار باز هم شرکت‌ها را جدا می‌کند
+            error_log('NSC rebar tenant_id migration skipped: ' . $e->getMessage());
+        }
     } catch (Throwable $e) {
         // Non-fatal if DB permissions restrict DDL
     }
@@ -75,8 +90,14 @@ function ensurePhase3RebarTables(PDO $db): void {
 /**
  * Upsert a rebar specification weight per bar in rebar_spec_memory
  * Key: diameter_mm||length_m||LOWER(brand_spec) (never assumes diameter alone determines weight)
+ *
+ * Tenant scoping: پیش از این spec_key سراسری یکتا بود و جست‌وجو هم بدون فیلتر شرکت انجام
+ * می‌شد؛ هر شرکتی که وزن مرجع را عوض می‌کرد، ردیف شرکت‌های دیگر را بازنویسی می‌کرد و
+ * محاسبهٔ وزن پروژه‌های آن‌ها بی‌خبر تغییر می‌کرد. اکنون کلید با شناسهٔ شرکت پیشوند
+ * می‌گیرد (بدون نیاز به حذف قید UNIQUE موجود) و هر نوشتن به شرکت خودش محدود است.
+ * ردیف‌های قدیمیِ بدون شرکت (tenant_id IS NULL) به‌عنوان «پیش‌فرض مشترک» فقط خواندنی می‌مانند.
  */
-function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy = 'Admin'): array {
+function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy = 'Admin', string $tenantId = ''): array {
     $diameterMm = round((float)($spec['diameterMm'] ?? $spec['diameter_mm'] ?? 0), 2);
     $lengthM = round((float)($spec['lengthM'] ?? $spec['length_m'] ?? 12), 2);
     $brandSpec = trim((string)($spec['brandSpec'] ?? $spec['brand_spec'] ?? 'عمومی')) ?: 'عمومی';
@@ -87,7 +108,7 @@ function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy = 'Admin'):
         return ['saved' => false];
     }
 
-    $specKey = $diameterMm . '||' . $lengthM . '||' . mb_strtolower($brandSpec, 'UTF-8');
+    $specKey = ($tenantId !== '' ? $tenantId . '||' : '') . $diameterMm . '||' . $lengthM . '||' . mb_strtolower($brandSpec, 'UTF-8');
     $findStmt = $db->prepare("SELECT * FROM rebar_spec_memory WHERE spec_key = :skey LIMIT 1");
     $findStmt->execute([':skey' => $specKey]);
     $existing = $findStmt->fetch();
@@ -113,13 +134,14 @@ function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy = 'Admin'):
                 original_weight_per_bar_kg = :orig,
                 weight_history_json = :hist,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = :id
+            WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)
         ");
         $updStmt->execute([
             ':w' => $weightPerBarKg,
             ':orig' => $origWeight,
             ':hist' => json_encode($history, JSON_UNESCAPED_UNICODE),
             ':id' => $existing['id'],
+            ':tid' => $tenantId,
         ]);
         return [
             'saved' => true,
@@ -139,12 +161,13 @@ function upsertRebarSpecInDb(PDO $db, array $spec, string $changedBy = 'Admin'):
     ]];
     $insStmt = $db->prepare("
         INSERT INTO rebar_spec_memory
-        (id, project_id, diameter_mm, length_m, brand_spec, weight_per_bar_kg, original_weight_per_bar_kg, spec_key, weight_history_json)
-        VALUES (:id, :proj, :d, :l, :b, :w, :orig, :skey, :hist)
+        (id, project_id, tenant_id, diameter_mm, length_m, brand_spec, weight_per_bar_kg, original_weight_per_bar_kg, spec_key, weight_history_json)
+        VALUES (:id, :proj, :tid, :d, :l, :b, :w, :orig, :skey, :hist)
     ");
     $insStmt->execute([
         ':id' => $id,
         ':proj' => $projectId,
+        ':tid' => $tenantId !== '' ? $tenantId : null,
         ':d' => $diameterMm,
         ':l' => $lengthM,
         ':b' => $brandSpec,
@@ -177,9 +200,10 @@ if ($method === 'GET') {
         $length = isset($_GET['lengthM']) ? (float)$_GET['lengthM'] : null;
         $brand = $_GET['brandSpec'] ?? null;
 
+        // ردیف‌های خودِ این شرکت + پیش‌فرض‌های مشترک قدیمی (tenant_id IS NULL و بدون پروژه)
         $sql = "SELECT r.* FROM rebar_spec_memory r
                 LEFT JOIN projects p ON r.project_id = p.id
-                WHERE (r.project_id IS NULL OR p.tenant_id = :tid)";
+                WHERE (r.tenant_id = :tid OR (r.tenant_id IS NULL AND (r.project_id IS NULL OR p.tenant_id = :tid)))";
         $params = [':tid' => $tenantId];
         if ($projectId) {
             $sql .= " AND (r.project_id = :pid OR r.project_id IS NULL)";
@@ -324,7 +348,7 @@ if ($method === 'POST') {
 
     // Phase 3 — TASK 1: Save or update rebar specification weight per bar
     if ((isset($_GET['action']) && $_GET['action'] === 'rebar_specs') || (($input['action'] ?? '') === 'save_rebar_spec')) {
-        $res = upsertRebarSpecInDb($db, $input, $user['name'] ?? 'Admin');
+        $res = upsertRebarSpecInDb($db, $input, $user['name'] ?? 'Admin', (string)$tenantId);
         if (empty($res['saved'])) {
             jsonResponse(false, null, 'قطر، طول و وزن یک شاخه (kg) معتبر الزامی است.', 422);
         }
@@ -497,7 +521,7 @@ if ($method === 'POST') {
                     'lengthM' => $l,
                     'brandSpec' => $b,
                     'weightPerBarKg' => $weightPerBarKg,
-                ], $user['name'] ?? 'Admin');
+                ], $user['name'] ?? 'Admin', (string)$tenantId);
             }
         }
 
@@ -686,7 +710,7 @@ if ($method === 'PUT') {
                     'lengthM' => $l,
                     'brandSpec' => $b,
                     'weightPerBarKg' => $weightPerBarKg,
-                ], $user['name'] ?? 'Admin');
+                ], $user['name'] ?? 'Admin', (string)$tenantId);
             }
         }
 

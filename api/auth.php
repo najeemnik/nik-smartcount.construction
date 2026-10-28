@@ -7,6 +7,57 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 
+/**
+ * ثبت اتمی یک تلاش ورود ناموفق.
+ *
+ * چرا: پیش از این ابتدا COUNT گرفته می‌شد و بعداً (پس از بررسی رمز) INSERT انجام می‌شد.
+ * بین این دو، N درخواست هم‌زمان همه عدد «۹» را می‌دیدند و همه رد می‌شدند؛ یعنی با ارسال
+ * موازی می‌شد بیش از سقف تعیین‌شده تلاش کرد و محافظت عملاً بی‌اثر بود (TOCTOU).
+ *
+ * اکنون شمارش و درج زیر یک قفل نام‌دار MySQL (GET_LOCK) انجام می‌شود؛ بنابراین دقیقاً
+ * تا سقف، تلاش ثبت می‌شود و بقیه با ۴۲۹ برمی‌گردند. اگر GET_LOCK در دسترس نباشد
+ * (هاست غیر MySQL) به رفتار قبلی برمی‌گردیم، نه اینکه ورود را ببندیم.
+ *
+ * @return bool true اگر تلاش ثبت شد، false اگر سقف پر است.
+ */
+function nscRecordLoginAttempt(PDO $db, string $identifier, string $ip, int $maxPerIdentifier = 10, int $maxPerIp = 20): bool {
+    $lockName = 'nsc_login_' . substr(hash('sha256', $identifier . '|' . $ip), 0, 40);
+    $locked = false;
+    try {
+        $lk = $db->prepare("SELECT GET_LOCK(:n, 3) AS g");
+        $lk->execute([':n' => $lockName]);
+        $locked = (int)($lk->fetch()['g'] ?? 0) === 1;
+    } catch (Throwable $e) {
+        $locked = false; // MySQL نیست یا GET_LOCK بسته است
+    }
+
+    try {
+        $c1 = $db->prepare("SELECT COUNT(*) AS c FROM login_attempts WHERE identifier = :i AND attempted_at > (NOW() - INTERVAL 15 MINUTE)");
+        $c1->execute([':i' => $identifier]);
+        $nIdent = (int)($c1->fetch()['c'] ?? 0);
+
+        $c2 = $db->prepare("SELECT COUNT(*) AS c FROM login_attempts WHERE ip_address = :p AND attempted_at > (NOW() - INTERVAL 15 MINUTE)");
+        $c2->execute([':p' => $ip]);
+        $nIp = (int)($c2->fetch()['c'] ?? 0);
+
+        if ($nIdent >= $maxPerIdentifier || $nIp >= $maxPerIp) {
+            return false;
+        }
+
+        $ins = $db->prepare("INSERT INTO login_attempts (identifier, ip_address) VALUES (:i, :p)");
+        $ins->execute([':i' => $identifier, ':p' => $ip]);
+        return true;
+    } catch (Throwable $e) {
+        error_log('Rate-limit record failed: ' . $e->getMessage());
+        return true; // خطای ثبت نباید ورود را قفل کند
+    } finally {
+        if ($locked) {
+            try { $db->prepare("SELECT RELEASE_LOCK(:n)")->execute([':n' => $lockName]); } catch (Throwable $e) { /* best-effort */ }
+        }
+    }
+}
+
+
 sendSecurityHeaders();
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -198,11 +249,8 @@ if ($method === 'POST') {
         $roleMismatch = $user && (($action === 'master_login') !== ((int)($user['is_master'] ?? 0) === 1));
 
         if (!$user || $roleMismatch) {
-            if (!$roleMismatch) {
-                try {
-                    $insStmt = $db->prepare("INSERT INTO login_attempts (identifier, ip_address) VALUES (:ident, :ip)");
-                    $insStmt->execute(['ident' => $attemptKey, 'ip' => $clientIp]);
-                } catch (Exception $e) { error_log('Rate-limit record failed: ' . $e->getMessage()); }
+            if (!$roleMismatch && !nscRecordLoginAttempt($db, $attemptKey, $clientIp)) {
+                jsonResponse(false, null, 'به دلیل تلاش‌های ناموفق پی‌هم، ورود برای ۱۵ دقیقه قفل شد. لطفاً بعداً تلاش کنید.', 429);
             }
             jsonResponse(false, null,
                 'نام کاربری یا رمز عبور اشتباه است. اگر حساب مدیر ارشد دارید از صفحهٔ ورود مدیر استفاده کنید.',
@@ -227,11 +275,11 @@ if ($method === 'POST') {
         $passwordMatches = verifyUserPassword($user, $password, $username);
 
         if (!$passwordMatches) {
-            try {
-                $insStmt = $db->prepare("INSERT INTO login_attempts (identifier, ip_address) VALUES (:ident, :ip)");
-                $insStmt->execute(['ident' => $attemptKey, 'ip' => substr($clientIp, 0, 45)]);
-            } catch (Exception $e) { error_log('Rate-limit record failed: ' . $e->getMessage()); }
+            $recorded = nscRecordLoginAttempt($db, $attemptKey, substr($clientIp, 0, 45));
             logAudit($db, $user['id'], $user['name'], 'login', 'auth', null, 'تلاش ناموفق برای ورود به سیستم');
+            if (!$recorded) {
+                jsonResponse(false, null, 'به دلیل تلاش‌های ناموفق پی‌هم، ورود برای ۱۵ دقیقه قفل شد. لطفاً بعداً تلاش کنید.', 429);
+            }
             jsonResponse(false, null, 'نام کاربری یا رمز عبور اشتباه است.', 401);
         }
 

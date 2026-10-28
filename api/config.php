@@ -12,6 +12,19 @@ ini_set('log_errors', '1');
 error_reporting(E_ALL);
 date_default_timezone_set('Asia/Kabul');
 
+/**
+ * نرخ ارز پیش‌فرض (افغانی برای هر دالر) — فقط زمانی به کار می‌رود که هیچ نرخی
+ * ثبت نشده باشد. پیش از این عدد 70.0 در سه فایل تکرار شده بود و اگر نرخ واقعی
+ * بازار عوض می‌شد، گزارش‌ها بی‌خبر با نرخ قدیمی محاسبه می‌شدند.
+ * برای تغییر بدون دست‌زدن به کد: متغیر محیطی NSC_DEFAULT_EXCHANGE_RATE را بگذارید.
+ */
+if (!defined('NSC_DEFAULT_EXCHANGE_RATE')) {
+    $envRate = getenv('NSC_DEFAULT_EXCHANGE_RATE');
+    define('NSC_DEFAULT_EXCHANGE_RATE', ($envRate !== false && is_numeric($envRate) && (float)$envRate > 0)
+        ? (float)$envRate
+        : 70.0);
+}
+
 // Saved private settings take priority. Empty environment values do not erase DB names.
 $credentialFile=__DIR__.'/.secrets/database.php';
 $nscDatabase=is_file($credentialFile)?require $credentialFile:[];
