@@ -118,8 +118,10 @@ php tools/nsc-init.php
   نوشتن اصلی کلاینت در فضای کاری JSON (`workspace_sync_states`) انجام می‌شود. تا زمانی که
   یک «پروجکتور» از JSON به جدول‌های رابطه‌ای ساخته نشود، این گزارش‌ها برای داده‌های
   وارد‌شده از UI خالی می‌مانند. این تنها شکاف معماری باقی‌مانده است.
-- `api/workspace.php` مسیر ذخیره‌سازی جایگزین (جدول `app_workspaces`) است و **توسط کلاینت
-  صدا زده نمی‌شود**؛ مسیر رسمی `office7.php?action=workspace_sync` است.
+- مسیر ذخیره‌سازی رسمی، `api/workspace.php` است (جدول `app_workspaces`): صفحهٔ
+  `workspace.php` با `window.NSC_PERSIST` آن را صدا می‌زند و کنترل تعارض بر پایهٔ نسخه
+  (`baseVersion` → 409) انجام می‌شود. اکشن `office7.php?action=workspace_sync` برای
+  سازگاری مانده و فراخواننده‌ای در کلاینت ندارد.
 - `api/files.php` (مدیریت فایل) در کلاینت فعلی به UI وصل نشده است.
 
 ---

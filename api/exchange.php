@@ -20,27 +20,36 @@ $db = Database::getConnection();
 $user = authenticateUser(false);
 $tenantId = currentTenantId($user);
 
-// Ensure exchange_transactions table exists (backward-compatible auto-migration)
-$db->exec("
+// جدول exchange_transactions اکنون در api/.secrets/schema.sql تعریف شده و با
+// nscSchemaEnsure خودکار ساخته می‌شود. اجرای CREATE TABLE در هر درخواست یک DDL
+// اضافی و قفل متادیتا روی MySQL بود؛ اکنون فقط اگر جدول واقعاً نبود، یک‌بار اجرا می‌شود.
+static $nscExchangeTableChecked = false;
+if (!$nscExchangeTableChecked) {
+    $nscExchangeTableChecked = true;
+    try {
+        $db->query("SELECT 1 FROM `exchange_transactions` LIMIT 1");
+    } catch (Throwable $missingTable) {
+        try {
+            $db->exec("
 CREATE TABLE IF NOT EXISTS `exchange_transactions` (
   `id` VARCHAR(64) NOT NULL PRIMARY KEY,
-  `tenant_id` VARCHAR(36) NULL,
-  `project_id` VARCHAR(36) NOT NULL,
-  `direction` ENUM('out', 'in') NOT NULL DEFAULT 'out',
+  `tenant_id` VARCHAR(64) NULL,
+  `project_id` VARCHAR(64) NOT NULL,
+  `direction` ENUM('out','in') NOT NULL DEFAULT 'out',
   `exchange_agent` VARCHAR(200) NOT NULL,
   `sender_name` VARCHAR(200) NOT NULL,
   `recipient_name` VARCHAR(200) NOT NULL,
   `transaction_date` DATE NOT NULL,
   `transaction_time` VARCHAR(20) NULL,
   `reference_number` VARCHAR(100) NOT NULL,
-  `amount` DECIMAL(16, 2) NOT NULL,
-  `currency` ENUM('AFN', 'USD') NOT NULL DEFAULT 'AFN',
-  `exchange_rate` DECIMAL(12, 4) NULL DEFAULT NULL,
-  `amount_afn` DECIMAL(16, 2) NOT NULL DEFAULT 0.00,
-  `amount_usd` DECIMAL(16, 2) NOT NULL DEFAULT 0.00,
+  `amount` DECIMAL(16,2) NOT NULL,
+  `currency` ENUM('AFN','USD') NOT NULL DEFAULT 'AFN',
+  `exchange_rate` DECIMAL(12,4) NULL DEFAULT NULL,
+  `amount_afn` DECIMAL(16,2) NOT NULL DEFAULT 0.00,
+  `amount_usd` DECIMAL(16,2) NOT NULL DEFAULT 0.00,
   `purpose` VARCHAR(500) NOT NULL,
   `notes` TEXT NULL,
-  `status` ENUM('draft', 'pending', 'paid', 'received', 'cancelled') NOT NULL DEFAULT 'draft',
+  `status` ENUM('draft','pending','paid','received','cancelled') NOT NULL DEFAULT 'draft',
   `linked_obligation_type` VARCHAR(50) NULL DEFAULT NULL,
   `linked_obligation_id` VARCHAR(64) NULL DEFAULT NULL,
   `linked_obligation_label` VARCHAR(255) NULL DEFAULT NULL,
@@ -55,8 +64,13 @@ CREATE TABLE IF NOT EXISTS `exchange_transactions` (
   INDEX `idx_exc_status` (`status`),
   INDEX `idx_exc_currency` (`currency`),
   INDEX `idx_exc_ref` (`reference_number`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 ");
+        } catch (Throwable $cannotCreate) {
+            error_log('exchange table ensure failed: ' . $cannotCreate->getMessage());
+        }
+    }
+}
 
 /**
  * Compute separate AFN and USD values.

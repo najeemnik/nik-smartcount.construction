@@ -12,7 +12,12 @@ header('X-Robots-Tag: noindex, nofollow');
  * برای نصب دوباره (فقط روی یک دیتابیس خالی): فایل api/.secrets/installed.lock را
  * دستی حذف کنید و کلید نصب تازه بسازید.
  */
-if (is_file(__DIR__ . '/api/.secrets/installed.lock')) {
+// فقط وقتی نصب کامل و اتصال دیتابیس موجود است صفحه پنهان می‌شود.
+// اگر فایل رمز دیتابیس از دست رفته باشد (بازگردانی بکاپ بدون database.php) کاربر باید
+// بتواند دوباره اتصال را ثبت کند؛ وگرنه بن‌بست کامل می‌شد.
+$sealedForReal = is_file(__DIR__ . '/api/.secrets/installed.lock')
+    && is_file(__DIR__ . '/api/.secrets/database.php');
+if ($sealedForReal) {
     http_response_code(404);
     echo '<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><title>یافت نشد</title>'
         . '<p style="font-family:Tahoma,sans-serif;padding:40px;text-align:center">'

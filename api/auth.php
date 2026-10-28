@@ -189,12 +189,24 @@ if ($method === 'POST') {
         $stmt->execute(['u1' => $username, 'u2' => $username]);
         $user = $stmt->fetch();
 
-        if (!$user || (($action === 'master_login') !== ((int)($user['is_master'] ?? 0) === 1))) {
-            try {
-                $insStmt = $db->prepare("INSERT INTO login_attempts (identifier, ip_address) VALUES (:ident, :ip)");
-                $insStmt->execute(['ident' => $attemptKey, 'ip' => $clientIp]);
-            } catch (Exception $e) { error_log('Rate-limit record failed: ' . $e->getMessage()); }
-            jsonResponse(false, null, 'نام کاربری یا رمز عبور اشتباه است.', 401);
+        // صفحهٔ اشتباه ≠ رمز اشتباه.
+        // پیش از این، مدیر ارشد که از login.php (یا کارمند از office7-login.php) وارد می‌شد،
+        // حتی با رمز درست رد می‌شد و هر تلاش به‌عنوان «ورود ناموفق» ثبت می‌گشت؛ پس چند
+        // تلاش ساده می‌توانست حساب را ۱۵ دقیقه قفل کند.
+        // اکنون: عدم تطابق نوع حساب شکست اعتبارنامه شمرده نمی‌شود و پیام یکسان برای همهٔ
+        // حالت‌ها برگردانده می‌شود تا وجود یا نوع حساب افشا نشود.
+        $roleMismatch = $user && (($action === 'master_login') !== ((int)($user['is_master'] ?? 0) === 1));
+
+        if (!$user || $roleMismatch) {
+            if (!$roleMismatch) {
+                try {
+                    $insStmt = $db->prepare("INSERT INTO login_attempts (identifier, ip_address) VALUES (:ident, :ip)");
+                    $insStmt->execute(['ident' => $attemptKey, 'ip' => $clientIp]);
+                } catch (Exception $e) { error_log('Rate-limit record failed: ' . $e->getMessage()); }
+            }
+            jsonResponse(false, null,
+                'نام کاربری یا رمز عبور اشتباه است. اگر حساب مدیر ارشد دارید از صفحهٔ ورود مدیر استفاده کنید.',
+                401);
         }
 
         if ((int)($user['is_locked'] ?? 0) === 1) {

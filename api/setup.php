@@ -2,7 +2,11 @@
 require_once __DIR__.'/db.php';require_once __DIR__.'/connection.php';sendSecurityHeaders();
 $dir=__DIR__.'/.secrets';
 if(($_SERVER['REQUEST_METHOD']??'GET')!=='POST')jsonResponse(false,null,'Method not allowed.',405);
-if(is_file($dir.'/installed.lock'))jsonResponse(false,null,'نصب قبلاً قفل شده است. فایل قفل را حذف نکنید.',409);
+// قفل نصب فقط وقتی مانع است که اتصال فعلی موجود باشد. اگر فایل database.php از بین رفته
+// باشد (بازگردانی بکاپ)، کاربر باید بتواند همان دیتابیس را دوباره وصل کند؛ در غیر این صورت
+// تنها راه، ویرایش دستی فایل روی هاست بود.
+$nscRecoveryMode = DB_NAME === '' || DB_USER === '';
+if(is_file($dir.'/installed.lock') && !$nscRecoveryMode)jsonResponse(false,null,'نصب قبلاً قفل شده است. فایل قفل را حذف نکنید.',409);
 $input=getJsonInput();$expected=is_file($dir.'/install.key')?trim((string)file_get_contents($dir.'/install.key')):'';
 $guard=fopen($dir.'/bootstrap.guard','c');
 if(!$guard||!flock($guard,LOCK_EX))jsonResponse(false,null,'پوشه api/.secrets برای PHP قابل نوشتن نیست.',503);
@@ -24,7 +28,9 @@ try{
   if($old){try{if((int)$old->query('SELECT COUNT(*) FROM users WHERE is_master=1')->fetchColumn()>0)jsonResponse(false,null,'مدیر اصلی موجود است؛ نصب یا تغییر اتصال اولیه اجازه ندارد.',409);}catch(PDOException $e){if($e->getCode()!=='42S02')throw $e;}}
  }
  $connection=nscConnect($cfg);
- if($connection->query('SHOW TABLES')->fetchColumn()!==false)jsonResponse(false,null,'برای نصب تازه دیتابیس خالی لازم است. هیچ جدول موجودی حذف نشد.',409);
+ // در حالت بازیابی (بدون database.php) وصل‌شدن به دیتابیس موجودِ خودِ مشتری مجاز است؛
+ // هیچ جدولی حذف یا تغییر داده نمی‌شود. در نصب تازه همان قاعدهٔ «دیتابیس خالی» برجاست.
+ if(!$nscRecoveryMode && $connection->query('SHOW TABLES')->fetchColumn()!==false)jsonResponse(false,null,'برای نصب تازه دیتابیس خالی لازم است. هیچ جدول موجودی حذف نشد.',409);
  if(($input['action']??'test')==='test')jsonResponse(true,['connected'=>true],'اتصال موفق است.');
  if(($input['action']??'')!=='configure')jsonResponse(false,null,'Unknown action.',400);
  $target=$dir.'/database.php';

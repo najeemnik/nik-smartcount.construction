@@ -495,10 +495,16 @@ if ($method === 'POST') {
         $userId = trim((string)($input['userId'] ?? ($input['id'] ?? '')));
         $lockStatus = !empty($input['isLocked']) || !empty($input['isLockedBySuperAdmin']) ? 1 : 0;
 
-        $stmt = $db->prepare("UPDATE users SET is_locked = :l WHERE id = :id AND is_master = 0" . ($isMasterAuthorized ? '' : ' AND owner_admin_id = :owner'));
+        if ($userId === '') { jsonResponse(false, null, 'شناسه کاربر الزامی است.', 400); }
+        $stmt = $db->prepare("UPDATE users SET is_locked = :l, token_version = token_version + 1 WHERE id = :id AND is_master = 0" . ($isMasterAuthorized ? '' : ' AND owner_admin_id = :owner'));
         $lockParams = ['l' => $lockStatus, 'id' => $userId];
         if (!$isMasterAuthorized) $lockParams['owner'] = $currentUser['id'];
         $stmt->execute($lockParams);
+        // پیش از این پاسخ همیشه «موفق» بود، حتی وقتی هیچ ردیفی تغییر نمی‌کرد
+        // (شناسه اشتباه، حساب مدیر ارشد، یا کاربر شرکت دیگر). اکنون صادق است.
+        if ($stmt->rowCount() === 0) {
+            jsonResponse(false, null, 'کاربر یافت نشد یا شما اجازهٔ تغییر وضعیت او را ندارید.', 404);
+        }
 
         logAudit($db, $currentUser['id'] ?? 'master', 'دفتر هفت', $lockStatus ? 'lock' : 'unlock', 'users', $userId, $lockStatus ? 'مسدودسازی دسترسی' : 'رفع مسدودیت دسترسی');
 

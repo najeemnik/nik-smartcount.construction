@@ -19,7 +19,10 @@ if ($method === 'GET') {
     $action = $_GET['action'] ?? 'entries';
 
     if ($action === 'chart_of_accounts') {
-        $stmt = $db->query("SELECT * FROM chart_of_accounts ORDER BY account_code ASC");
+        // حساب‌های سیستمی (tenant_id = NULL) + حساب‌های سفارشی همین شرکت.
+        // پیش از این بدون فیلتر خوانده می‌شد، یعنی حساب‌های سفارشی شرکت‌های دیگر هم دیده می‌شد.
+        $stmt = $db->prepare("SELECT * FROM chart_of_accounts WHERE tenant_id IS NULL OR tenant_id = :tid ORDER BY account_code ASC");
+        $stmt->execute(['tid' => $tenantId]);
         jsonResponse(true, ['accounts' => $stmt->fetchAll()]);
     }
 
@@ -34,16 +37,29 @@ if ($method === 'GET') {
         $stmt->execute(['tid' => $tenantId]);
         $entries = $stmt->fetchAll();
 
-        foreach ($entries as &$entry) {
-            $lStmt = $db->prepare("
-                SELECT jl.*, ca.account_name, ca.account_code 
-                FROM journal_lines jl 
-                LEFT JOIN chart_of_accounts ca ON jl.account_id = ca.id 
-                WHERE jl.journal_entry_id = :jid
-            ");
-            $lStmt->execute(['jid' => $entry['id']]);
-            $entry['lines'] = $lStmt->fetchAll();
+        // رفع N+1: قبلاً برای هر سند یک کوئری جدا اجرا می‌شد (تا ۱۰۱ کوئری برای ۱۰۰ سند).
+        // اکنون همهٔ ردیف‌ها با یک کوئری خوانده و در PHP گروه‌بندی می‌شوند.
+        $linesByEntry = [];
+        if (!empty($entries)) {
+            $ids = array_values(array_filter(array_map(fn($e) => (string)($e['id'] ?? ''), $entries)));
+            if (!empty($ids)) {
+                $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                $lStmt = $db->prepare("
+                    SELECT jl.*, ca.account_name, ca.account_code
+                    FROM journal_lines jl
+                    LEFT JOIN chart_of_accounts ca ON jl.account_id = ca.id
+                    WHERE jl.journal_entry_id IN ($placeholders)
+                ");
+                $lStmt->execute($ids);
+                foreach ($lStmt->fetchAll() as $line) {
+                    $linesByEntry[(string)$line['journal_entry_id']][] = $line;
+                }
+            }
         }
+        foreach ($entries as &$entry) {
+            $entry['lines'] = $linesByEntry[(string)$entry['id']] ?? [];
+        }
+        unset($entry);
 
         jsonResponse(true, ['entries' => $entries]);
     }
@@ -75,6 +91,28 @@ if ($method === 'POST') {
     // بررسی اصل تعادل حسابداری دوطرفه (Total Debits == Total Credits)
     if (abs($totalDebit - $totalCredit) > 0.01) {
         jsonResponse(false, null, "سند تراز نیست! مجموع بدهکار ($totalDebit) با بستانکار ($totalCredit) برابر نمی‌باشد.", 400);
+    }
+
+    // اعتبارسنجی حساب‌ها: بدون این بررسی، ردیف‌هایی با account_id ناموجود در دیتابیس ثبت می‌شد
+    // (هیچ کلید خارجی وجود ندارد) و سند در گزارش‌ها بدون نام حساب ظاهر می‌شد.
+    $accountIds = [];
+    foreach ($lines as $line) {
+        if (!is_array($line)) continue;
+        $aid = trim((string)($line['accountId'] ?? ''));
+        if ($aid !== '') $accountIds[$aid] = true;
+    }
+    if (empty($accountIds)) {
+        jsonResponse(false, null, 'هر ردیف سند باید حساب انتخاب‌شده داشته باشد.', 400);
+    }
+    $ids = array_keys($accountIds);
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $chk = $db->prepare("SELECT id FROM chart_of_accounts WHERE id IN ($placeholders) AND (tenant_id IS NULL OR tenant_id = ?)");
+    $chk->execute(array_merge($ids, [$tenantId]));
+    $valid = array_flip(array_map('strval', $chk->fetchAll(PDO::FETCH_COLUMN)));
+    foreach ($ids as $aid) {
+        if (!isset($valid[(string)$aid])) {
+            jsonResponse(false, null, 'حساب انتخاب‌شده معتبر نیست: ' . $aid, 400);
+        }
     }
 
     // امنیت: پروژه (در صورت انتخاب) باید متعلق به همین شرکت باشد
