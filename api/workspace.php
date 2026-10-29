@@ -14,7 +14,7 @@ $map = [
  'documents'=>'documents','projectFolders'=>'documents','projectFiles'=>'documents',
  'projectPartners'=>'partners','projectInvestments'=>'partners','partnerEquityTransfers'=>'partners',
  'projectBudgets'=>'budget','customAccounts'=>'accounting','interProjectTransfers'=>'payments',
- 'activityEvents'=>'reports','auditLogs'=>'reports'
+ 'activityEvents'=>'audit_logs','auditLogs'=>'audit_logs'
 ];
 function workspaceAllowed(array $u, string $module, string $action, ?string $pid = null): bool {
  return canAccessModule($u, $module, $action, $pid, $pid === null);
@@ -76,12 +76,18 @@ if ($method === 'POST') {
      if(!canAccessModule($user,$module,'edit',$previousPid!==''?$previousPid:null)){$db->rollBack();jsonResponse(false,null,'صلاحیت ویرایش پروژهٔ قبلی را ندارید.',403);}
     }
     $pid=(string)($key==='projects'?($r['id']??''):($r['projectId']??$r['project_id']??''));
+    $previousStatus=isset($before[$id])?(string)($before[$id]['docStatus']??''):'';
+    $nextStatus=(string)($r['docStatus']??'');
+    $approvalChange=(in_array($previousStatus,['posted','reversed'],true) || ($previousStatus!==$nextStatus && (in_array($previousStatus,['posted','reversed'],true)||in_array($nextStatus,['posted','reversed'],true))));
+    if($key==='interProjectTransfers' && (string)($before[$id]['status']??'')!==(string)($r['status']??'') && in_array($r['status']??'',['approved','rejected'],true))$approvalChange=true;
+    if($approvalChange && !canAccessModule($user,$module,'approve',$pid!==''?$pid:null)){$db->rollBack();jsonResponse(false,null,'صلاحیت تأیید یا بازگشایی سند را ندارید.',403);}
     if(!canAccessModule($user,$module,$action,$pid!==''?$pid:null)){$db->rollBack();jsonResponse(false,null,'صلاحیت این عملیات را ندارید: '.$action,403);}
    }
    foreach($before as $id=>$r){
     if(isset($after[$id]))continue;
     $pid=(string)($key==='projects'?($r['id']??''):($r['projectId']??$r['project_id']??''));
     if(!workspaceAllowed($user,$module,'view',$pid!==''?$pid:null))continue;
+    if(in_array($r['docStatus']??'',['posted','reversed'],true) && !canAccessModule($user,$module,'approve',$pid!==''?$pid:null)){$db->rollBack();jsonResponse(false,null,'حذف سند نهایی صلاحیت تأیید می‌خواهد.',403);}
     if(!workspaceAllowed($user,$module,'delete',$pid!==''?$pid:null)){$db->rollBack();jsonResponse(false,null,'صلاحیت حذف ندارید.',403);}
    }
   }

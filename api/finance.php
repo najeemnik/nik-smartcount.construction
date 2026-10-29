@@ -321,6 +321,7 @@ if ($method === 'POST') {
             $ownStmt->execute(['pid' => $prj, 'tid' => $tenantId]);
             if (!$ownStmt->fetch()) { jsonResponse(false, null, 'پروژه مبدأ/مقصد یافت نشد یا دسترسی ندارید.', 404); }
             assertModulePermission($user,'payments','create',(string)$prj);
+            assertModulePermission($user,'payments','approve',(string)$prj);
         }
         foreach (['from_a' => $fromAcc, 'to_a' => $toAcc] as $lbl => $acc) {
             if (!empty($acc)) {

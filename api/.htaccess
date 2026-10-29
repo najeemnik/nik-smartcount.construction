@@ -27,7 +27,7 @@ AddDefaultCharset UTF-8
     Header set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
-<FilesMatch "^(config(\.example)?|db|credentials|permissions|validation|report-data)\.php$">
+<FilesMatch "^(config(\.example)?|db|credentials|email-security|permission-catalog|permissions|validation|report-data)\.php$">
     Require all denied
 </FilesMatch>
 <IfModule mod_setenvif.c>

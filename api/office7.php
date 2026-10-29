@@ -158,6 +158,10 @@ if ($method === 'GET') {
                 'troot2' => $tenantRootId,
             ];
         }
+        if(!$meMaster && !canAccessModule($currentUser,'users','view',null,true)){
+            $sql='SELECT * FROM users WHERE id=:only_me';
+            $tparams=['only_me'=>$meId];
+        }
         $sql .= " ORDER BY is_master DESC, created_at ASC";
         $stmt = $db->prepare($sql);
         $stmt->execute($tparams);
@@ -206,6 +210,7 @@ if ($method === 'GET') {
             jsonResponse(false, null, 'احراز هویت الزامی است.', 401);
         }
         if ((int)($currentUser['is_master'] ?? 0) !== 1 && $currentUser['role'] !== 'admin') { jsonResponse(false, null, 'همگام‌سازی کل شرکت برای این نقش مجاز نیست.', 403); }
+        assertLegacyWorkspacePermission($currentUser,'view');
         $tenantId = currentTenantId($currentUser);
         $stmt = $db->prepare("SELECT * FROM workspace_sync_states WHERE tenant_id = :tid LIMIT 1");
         $stmt->execute(['tid' => $tenantId]);
@@ -297,13 +302,18 @@ if ($method === 'POST') {
             if ((string)$target['id'] === (string)$currentUser['id']) {
                 jsonResponse(false, null, 'تغییر تنظیمات مدیریتی مالک فقط از دفتر هفت ممکن است.', 403);
             }
-            foreach (['subscriptionPlan', 'subscriptionExpiresAt', 'customEnabledModules', 'allowedTabs', 'aiEnabled', 'ai_enabled', 'appProfile', 'staffLimit'] as $restricted) {
+            foreach (['subscriptionPlan', 'subscriptionExpiresAt', 'customEnabledModules', 'allowedTabs', 'appProfile', 'staffLimit'] as $restricted) {
                 if (array_key_exists($restricted, $input)) {
                     jsonResponse(false, null, 'این تنظیم فقط توسط دفتر هفت قابل تغییر است.', 403);
                 }
             }
         }
 
+        if(isset($input['email'])){
+            require_once __DIR__.'/email-security.php';
+            if(!is_string($input['email']) || !usableLoginEmail(trim($input['email'])))jsonResponse(false,null,'ایمیل واقعی و معتبر وارد کنید.',400);
+            $input['email']=trim($input['email']);
+        }
         if (isset($input['ownerAdminId']) && trim((string)$input['ownerAdminId']) !== '') {
             $ownerId=trim((string)$input['ownerAdminId']);
             $ownerCheck=$db->prepare('SELECT id FROM users WHERE id=:id AND role=:role AND is_master=0');
@@ -466,6 +476,7 @@ if ($method === 'POST') {
 
         $contextChanged=(array_key_exists('owner',$params) && (string)$params['owner']!==(string)($target['owner_admin_id']??''))
             || (isset($params['role']) && $params['role']!==$target['role']);
+        if(isset($input['email']) && (string)$input['email']!==(string)($target['email']??''))$contextChanged=true;
         if($contextChanged && $rawOrHashedPwd==='')$fields[]='token_version = token_version + 1';
 
         if (empty($fields)) {
@@ -618,6 +629,7 @@ if ($method === 'POST') {
         }
 
         if ((int)($currentUser['is_master'] ?? 0) !== 1 && $currentUser['role'] !== 'admin') { jsonResponse(false, null, 'همگام‌سازی کل شرکت برای این نقش مجاز نیست.', 403); }
+        assertLegacyWorkspacePermission($currentUser,'edit');
         $tenantId = currentTenantId($currentUser);
         $clientUpdatedAt = (int)($input['clientUpdatedAt'] ?? round(microtime(true) * 1000));
         $projectsJson = isset($input['projects']) ? json_encode($input['projects'], JSON_UNESCAPED_UNICODE) : null;

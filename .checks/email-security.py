@@ -1,0 +1,55 @@
+"""Only run against guarded nsc_audit + the local test sendmail sink, never a live mail server."""
+exec(open(__import__('pathlib').Path(__file__).with_name('regression.py')).read().split("owner=login('preview')")[0])
+import subprocess,re,http.cookies,urllib.error,concurrent.futures
+if base!='http://127.0.0.1:8081':raise RuntimeError('Refusing nonlocal MFA tests')
+def fixture(mode,*args):subprocess.run(['docker','exec','nsc-audit-web','php','/run/email-fixtures.php',mode,*args],capture_output=True,check=True)
+def code():
+ text=subprocess.check_output(['docker','exec','nsc-audit-web','cat','/tmp/nsc-test-mailbox'],text=True)
+ return re.search(r'code is: ([0-9]{6})',text).group(1)
+def login_step(cookie=None,username='preview',pwd=None):return request('/api/auth.php?action=login',{'username':username,'password':password if pwd is None else pwd},headers={'Cookie':cookie}if cookie else {})
+def challenge():
+ status,b=login_step();assert status==200 and b['data'].get('requiresVerification') and 'token'not in b['data'],(status,b.get('error','Unexpected response'));return b['data']['challengeId'],code()
+def verify(cid,c,trust=False):return request('/api/auth.php?action=verify_email_code',{'challengeId':cid,'code':c,'trustDevice':trust})
+def verify_cookie(cid,c):
+ payload=json.dumps({'challengeId':cid,'code':c,'trustDevice':True}).encode();req=urllib.request.Request(base+'/api/auth.php?action=verify_email_code',data=payload,headers={'Content-Type':'application/json'})
+ with opener.open(req) as r:return json.load(r),r.headers.get('Set-Cookie')
+fixture('disable');old=login('preview');fixture('reset');fixture('enable')
+try:
+ check('pre-MFA sessions cannot bypass new email requirement',request('/api/auth.php',token=old)[0]==401)
+ cid,c=challenge();check('password alone returns challenge without token',True)
+ check('wrong email code denied',verify(cid,'000000')[0]==401)
+ s,b=verify(cid,c);token=b['data']['token'];check('correct email code completes login',s==200 and request('/api/auth.php',token=token)[0]==200)
+ check('email code cannot be replayed',verify(cid,c)[0]==401)
+ check('without trust next login requires email code',login_step()[1]['data'].get('requiresVerification')is True)
+ fixture('clear');cid,c=challenge()
+ for _ in range(5):assert verify(cid,'000000')[0]==401
+ check('five wrong codes exhaust the challenge',verify(cid,c)[0]==401)
+ fixture('clear');cid,c=challenge();fixture('expire',cid);check('expired email code denied',verify(cid,c)[0]==401)
+ fixture('clear');cid,c=challenge();cid2,c2=challenge();check('new code supersedes older pending code',verify(cid,c)[0]==401);check('latest code still works',verify(cid2,c2)[0]==200)
+ fixture('clear');cid,c=challenge();body,header=verify_cookie(cid,c);cookie=header.split(';',1)[0];check('trusted cookie is secure and HTTP-only','secure'in header.lower() and 'httponly'in header.lower() and 'samesite=strict'in header.lower() and header.startswith('__Host-'))
+ check('trusted device still requires correct password',login_step(cookie,pwd='incorrect-password')[0]==401)
+ for i in range(5):
+  s,b=login_step(cookie);check(f'trusted device skips code on login {i+1}',s==200 and 'token'in b.get('data',{}))
+ s,b=login_step(cookie);check('sixth login requires email verification again',s==200 and b['data'].get('requiresVerification')is True and 'token'not in b['data'])
+ fixture('clear');cid,c=challenge();fixture('version');check('password/context version invalidates pending challenge',verify(cid,c)[0]==401);check('old trusted device invalid after session reset',login_step(cookie)[1]['data'].get('requiresVerification')is True)
+ fixture('clear');cid,c=challenge();fixture('lock');check('account locked after password step cannot complete login',verify(cid,c)[0]==403);fixture('unlock')
+ fixture('clear');cid,c=challenge()
+ with concurrent.futures.ThreadPoolExecutor(max_workers=2)as pool:outcomes=list(pool.map(lambda _:verify(cid,c)[0],range(2)))
+ check('concurrent code replay issues only one session',sorted(outcomes)==[200,401])
+ fixture('clear');fixture('placeholder');check('placeholder email cannot bypass verification',login_step()[0]==403);fixture('email')
+ fixture('clear')
+ subprocess.run(['docker','exec','nsc-audit-web','touch','/tmp/nsc-mail-fail'],check=True)
+ check('mail delivery failure does not issue session',login_step()[0]==503)
+ subprocess.run(['docker','exec','nsc-audit-web','rm','-f','/tmp/nsc-mail-fail'],check=True)
+ fixture('clear')
+ ma=json.loads(pathlib.Path('/workspace/nsc-preview/accounts.json').read_text())[1]
+ s,b=request('/api/auth.php?action=login',ma)
+ check('master password cannot use normal login endpoint',s==401)
+ s,b=request('/api/auth.php?action=master_login',ma);check('Office7 master also requires email code',s==200 and b['data'].get('requiresVerification')is True and 'token'not in b['data'])
+ s,b=verify(b['data']['challengeId'],code());check('verified master receives correct role',s==200 and b['data']['user']['isMasterSuperAdmin']is True and request('/api/admin.php?action=status',token=b['data']['token'])[0]==200)
+ fixture('clear')
+ for _ in range(10):assert login_step()[0]==200
+ check('email resend flood rate-limited',login_step()[0]==429)
+ check('email helper source denied',request('/api/email-security.php')[0]==403)
+ print(f'{sum(ok for _,ok in checks)}/{len(checks)} email-security checks passed');assert all(ok for _,ok in checks)
+finally:fixture('unlock');fixture('email');fixture('disable');fixture('clear')

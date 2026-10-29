@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . "/permission-catalog.php";
 /** Shared, side-effect-free permission checks for SQL APIs and workspace snapshots. */
 function permissionData($value): array {
     if (is_string($value)) $value = json_decode($value, true);
@@ -21,8 +22,8 @@ function canAccessModule(array $user, string $module, string $action = 'view', ?
     // Dashboard is a derived view rather than a selectable service tab.
     if ($module !== 'dashboard' && $tabs && !array_intersect($aliases, $tabs)) return false;
     $role = $user['role'] ?? 'viewer';
-    if ($role === 'admin') return true;
-    if (!in_array($role, ['viewer', 'accountant', 'project_manager', 'procurement'], true)) return false;
+    if (!in_array($role, ['admin', 'viewer', 'accountant', 'project_manager', 'procurement'], true)) return false;
+    if ($module === 'users' && $role !== 'admin') return false;
     if ($role === 'viewer' && $action !== 'view') return false;
     $perms = permissionData($user['permissions_json'] ?? []);
     foreach ($aliases as $alias) {
@@ -31,6 +32,7 @@ function canAccessModule(array $user, string $module, string $action = 'view', ?
         if (array_key_exists('view', $p) && !$p['view']) return false;
         foreach ($actions as $a) if (array_key_exists($a, $p) && !$p[$a]) return false;
     }
+    if ($role === 'admin') return true;
     $profile = permissionData($user['app_profile_json'] ?? []);
     $assigned = $profile['assignedProjectIds'] ?? [];
     if (is_array($assigned) && $assigned && !$moduleOnly) {
@@ -76,4 +78,29 @@ function canAccessProject(array $user, ?string $projectId): bool {
         foreach(($grant['sections']??[]) as $section)if(is_array($section)&&!empty($section['view']))return true;
     }
     return false;
+}
+
+/** Server-calculated UI ceiling. Project-specific writes still recheck the project. */
+function effectivePermissionMatrix(array $user): array {
+    $matrix=[];
+    foreach(permissionCatalog() as $module=>$labels){
+        foreach(permissionActions() as $action)$matrix[$module][$action]=canAccessModule($user,$module,$action,null,true);
+        $matrix[$module]['del']=$matrix[$module]['delete'];
+    }
+    return $matrix;
+}
+function assertLegacyWorkspacePermission(array $user, string $action): void {
+    foreach(['projects','expenses','steel','concrete','contractors','labor','suppliers','assets','apartments','payments','exchange','budget','accounting','partners','documents','reports','settings','audit_logs'] as $module){
+        if(!canAccessModule($user,$module,$action,null,true))jsonResponse(false,null,'همگام‌سازی قدیمی با محدودیت دسترسی سازگار نیست؛ از ورک‌اسپیس جدید استفاده کنید.',403);
+    }
+}
+
+function canAccessAi(array $user): bool {
+    if((int)($user['is_master']??0)===1)return true;
+    if((int)($user['is_locked']??0)===1||(int)($user['is_active']??1)!==1||(int)($user['ai_enabled']??1)!==1)return false;
+    if(!empty($user['_tenant_owner'])&&!canAccessAi($user['_tenant_owner']))return false;
+    $profile=permissionData($user['app_profile_json']??[]);
+    $perms=permissionData($user['permissions_json']??[]);
+    $mods=permissionData($user['allowed_modules_json']??[]);
+    return ($profile['aiEnabled']??true)!==false && ($perms['aiEnabled']??true)!==false && ($mods['aiAssistant']??true)!==false;
 }

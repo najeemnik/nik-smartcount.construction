@@ -24,3 +24,19 @@ Second-pass security cases (after the previous suites, reseed the isolated users
     python3 .checks/deep.py
 
 The 24 deep checks cover adversarial rate IDs, legacy primary-key collisions, project-specific rate memory, role/service restrictions, unclaimed contractors, conflicting password fields, draft access revocation, and account transfers. The fixture guards DB_NAME=nsc_audit and contains only synthetic records. No live-site penetration test was performed.
+
+Granular permissions and email verification:
+
+    python3 .checks/permission-matrix.py
+    node .checks/browser-permissions.cjs
+
+Email tests REQUIRE the local fake sendmail sink (they never send actual email). Copy email-fixtures.php to /run/email-fixtures.php in nsc-audit-web. It refuses any other database. Configure the audit container's sendmail_path to a local executable that writes stdin into /tmp/nsc-test-mailbox, mode 0600, and returns failure when /tmp/nsc-mail-fail exists. Never install this sink on a production host. The tests temporarily toggle the audit site's ignored api/.secrets/email.php and restore disabled MFA for the legacy test suites. Run suites sequentially, because they intentionally mutate the same test configuration and accounts.
+
+    python3 .checks/email-security.py
+    node .checks/browser-email.cjs
+
+The new default on a real installation is email MFA enabled, with security@nik-smartcount.com as sender. Before deployment, follow EMAIL_AND_PERMISSIONS_FA.md, especially correcting every login email before replacing the code. Tests disable MFA only in the isolated audit copy for the old suites. Never copy that private test override to production.
+
+Browser checks use Playwright Core and Chromium from the external test runtime. The compiled-client adapter patch-client-permissions.cjs uses Node and acorn 8.15.0 (build time only; PHP hosting needs neither Node nor npm). It starts from the previous preserved upstream gzip bundle and refuses duplicate application or mismatched helper structure. Keep it for review/rebuilding; it is not a substitute for the missing original React/TypeScript source. workspace-permissions.js and login-email.js are readable production source files.
+
+Preserved upstream client baseline for this adapter: commit bf6d83f, file nsc-accounting-r3.js.gz. The adapter makes no network requests. Its output is gzip-compressed after JavaScript parsing succeeds. If original frontend source becomes available, port these checks there and replace the adapter with the normal frontend build.

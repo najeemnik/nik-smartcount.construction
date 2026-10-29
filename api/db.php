@@ -133,6 +133,8 @@ function authenticateUser(bool $requireMaster = false): array {
     }
 
     // ابطال نشست‌ها: توکن‌های صادرشده قبل از logout_all نامعتبرند
+    require_once __DIR__.'/email-security.php';
+    if(emailSecuritySettings()['enabled'] && ($payload['email_verified']??false)!==true)jsonResponse(false,null,'برای تأیید ایمیل دوباره وارد شوید.',401);
     $tokenVersion = (int)($payload['ver'] ?? 0);
     if ($tokenVersion !== (int)($user['token_version'] ?? 0)) {
         logSyncReject($db, $user, '', 'auth:token-version-mismatch');
@@ -224,22 +226,7 @@ function assertModulePermission(array $user, string $module, string $action = 'v
  * Phase 11: Enforce per-user AI Assistant access in PHP APIs
  */
 function assertAiPermission(array $user): void {
-    if (!empty($user['_tenant_owner'])) { assertAiPermission($user['_tenant_owner']); }
-    if ((int)($user['is_master'] ?? 0) === 1) {
-        return;
-    }
-    if ((int)($user['is_locked'] ?? 0) === 1 || (array_key_exists('is_active', $user) && (int)$user['is_active'] === 0)) {
-        jsonResponse(false, null, 'حساب کاربری شما غیرفعال یا مسدود شده است.', 403);
-    }
-    if (array_key_exists('ai_enabled', $user) && (int)$user['ai_enabled'] === 0) {
-        jsonResponse(false, null, 'دسترسی به دستیار هوش مصنوعی برای حساب کاربری شما توسط مدیریت غیرفعال شده است.', 403);
-    }
-    if (!empty($user['app_profile_json'])) {
-        $profile = is_string($user['app_profile_json']) ? json_decode($user['app_profile_json'], true) : $user['app_profile_json'];
-        if (is_array($profile) && array_key_exists('aiEnabled', $profile) && $profile['aiEnabled'] === false) {
-            jsonResponse(false, null, 'دسترسی به دستیار هوش مصنوعی برای حساب کاربری شما غیرفعال است.', 403);
-        }
-    }
+    if(!canAccessAi($user))jsonResponse(false,null,'دسترسی به دستیار هوش مصنوعی برای این حساب غیرفعال است.',403);
 }
 
 /**
@@ -381,13 +368,14 @@ function currentTenantId(array $user): string {
 /**
  * ساخت توکن امضاشده HMAC امن (با پشتیبانی از Base64URL و شناسه یکتای توکن jti)
  */
-function generateToken(string $userId, string $role, int $isMaster, int $tokenVersion = 0): string {
+function generateToken(string $userId, string $role, int $isMaster, int $tokenVersion = 0, bool $emailVerified = false): string {
     $header = base64UrlEncode(json_encode(['alg' => 'HS256', 'typ' => 'JWT']));
     $payload = base64UrlEncode(json_encode([
         'user_id' => $userId,
         'role' => $role,
         'is_master' => $isMaster,
         'ver' => $tokenVersion,
+        'email_verified' => $emailVerified,
         'jti' => bin2hex(random_bytes(8)),
         'iat' => time(),
         'exp' => time() + (86400 * 30) // اعتبار ۳۰ روزه

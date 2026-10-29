@@ -6,6 +6,7 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/email-security.php';
 
 sendSecurityHeaders();
 
@@ -51,6 +52,12 @@ function ensureAuthUserSchema(PDO $db): array {
  * Format a MySQL user row into the canonical frontend User payload
  */
 function formatUserPayload(array $user, ?string $lastLoginOverride = null): array {
+    if (!empty($user['owner_admin_id']) && empty($user['_tenant_owner'])) {
+        $ownerQuery=Database::getConnection()->prepare('SELECT * FROM users WHERE id=:id AND role="admin" AND is_master=0');
+        $ownerQuery->execute(['id'=>$user['owner_admin_id']]);
+        $owner=$ownerQuery->fetch();
+        $user['_tenant_owner']=$owner?:['is_active'=>0];
+    }
     $appProfile = !empty($user['app_profile_json'])
         ? (is_string($user['app_profile_json']) ? json_decode($user['app_profile_json'], true) : $user['app_profile_json'])
         : null;
@@ -88,10 +95,12 @@ function formatUserPayload(array $user, ?string $lastLoginOverride = null): arra
         'ownerAdminId' => array_key_exists('owner_admin_id', $user) ? $user['owner_admin_id'] : ($appProfile['ownerAdminId'] ?? null),
         'active' => $isActive,
         'isLockedBySuperAdmin' => $isLocked,
-        'aiEnabled' => $aiEnabled,
+        'aiEnabled' => canAccessAi($user),
         'subscriptionPlan' => (string)($user['subscription_plan'] ?? 'pro'),
         'subscriptionExpiresAt' => $user['subscription_expires_at'] ?? null,
         'permissions' => $perms,
+        'effectivePermissions' => effectivePermissionMatrix($user),
+        'permissionCatalog' => permissionCatalog(),
         'customEnabledModules' => $mods,
         'allowedTabs' => is_array($tabs) ? $tabs : [],
         'projectGrants' => $appProfile['projectGrants'] ?? null,
@@ -139,11 +148,51 @@ function verifyUserPassword(array $user, string $password, string $loginInput = 
     return password_verify($password, $storedHash);
 }
 
+
+function completeUserLogin(PDO $db,array $user,array $schemaFlags): void {
+    $attemptKey=function_exists('mb_strtolower')?mb_strtolower((string)$user['username'],'UTF-8'):strtolower((string)$user['username']);
+        // ورود موفق: پاک‌سازی تلاش‌های ناموفق قبلی همین کاربر
+        try {
+            $clrStmt = $db->prepare("DELETE FROM login_attempts WHERE identifier = :ident");
+            $clrStmt->execute(['ident' => $attemptKey]);
+        } catch (Exception $e) { error_log('Rate-limit clear failed: ' . $e->getMessage()); }
+
+        // به‌روزرسانی تاریخ آخرین ورود و یکسان‌سازی نمک هش برای ورود از سایر دستگاه‌ها
+        $now = date('Y-m-d H:i:s');
+        try {
+            $canonicalSalt = strtolower(trim((string)$user['username']));
+            if ($schemaFlags['hasHashSalt'] && empty($user['hash_salt']) && substr((string)$user['password_hash'], 0, 7) === 'sha256$') {
+                $upStmt = $db->prepare("UPDATE users SET last_login_at = :now, hash_salt = :salt WHERE id = :id");
+                $upStmt->execute(['now' => $now, 'salt' => $canonicalSalt, 'id' => $user['id']]);
+            } else {
+                $upStmt = $db->prepare("UPDATE users SET last_login_at = :now WHERE id = :id");
+                $upStmt->execute(['now' => $now, 'id' => $user['id']]);
+            }
+        } catch (Exception $e) { error_log('last_login update failed: ' . $e->getMessage()); }
+
+        // تولید توکن امنیتی
+        $token = generateToken($user['id'], $user['role'], (int)$user['is_master'], (int)($user['token_version'] ?? 0), (bool)emailSecuritySettings()['enabled']);
+
+        // ثبت در لاگ امنیتی
+        logAudit($db, $user['id'], $user['name'], 'login', 'auth', $user['id'], 'ورود موفقانه به سامانه');
+
+        jsonResponse(true, [
+            'token' => $token,
+            'expiresAt' => date('c', time() + (86400 * 30)),
+            'user' => formatUserPayload($user, $now)
+        ], 'ورود با موفقیت انجام شد.');
+}
 $schemaFlags = ensureAuthUserSchema($db);
 
 if ($method === 'POST') {
     $input = getJsonInput();
     $action = $_GET['action'] ?? ($input['action'] ?? 'login');
+
+    if($action==='verify_email_code'){
+        ensureEmailSecuritySchema($db);
+        $user=verifyEmailChallenge($db,$input);
+        completeUserLogin($db,$user,$schemaFlags);
+    }
 
     if (in_array($action, ['login', 'master_login'], true)) {
         $username = trim((string)($input['username'] ?? ''));
@@ -218,36 +267,12 @@ if ($method === 'POST') {
             $rehash->execute(['hash' => protectClientPasswordHash((string)$user['password_hash']), 'id' => $user['id'], 'old' => $user['password_hash']]);
         }
 
-        // ورود موفق: پاک‌سازی تلاش‌های ناموفق قبلی همین کاربر
-        try {
-            $clrStmt = $db->prepare("DELETE FROM login_attempts WHERE identifier = :ident");
-            $clrStmt->execute(['ident' => $attemptKey]);
-        } catch (Exception $e) { error_log('Rate-limit clear failed: ' . $e->getMessage()); }
-
-        // به‌روزرسانی تاریخ آخرین ورود و یکسان‌سازی نمک هش برای ورود از سایر دستگاه‌ها
-        $now = date('Y-m-d H:i:s');
-        try {
-            $canonicalSalt = strtolower(trim((string)$user['username']));
-            if ($schemaFlags['hasHashSalt'] && empty($user['hash_salt']) && substr((string)$user['password_hash'], 0, 7) === 'sha256$') {
-                $upStmt = $db->prepare("UPDATE users SET last_login_at = :now, hash_salt = :salt WHERE id = :id");
-                $upStmt->execute(['now' => $now, 'salt' => $canonicalSalt, 'id' => $user['id']]);
-            } else {
-                $upStmt = $db->prepare("UPDATE users SET last_login_at = :now WHERE id = :id");
-                $upStmt->execute(['now' => $now, 'id' => $user['id']]);
-            }
-        } catch (Exception $e) { error_log('last_login update failed: ' . $e->getMessage()); }
-
-        // تولید توکن امنیتی
-        $token = generateToken($user['id'], $user['role'], (int)$user['is_master'], (int)($user['token_version'] ?? 0));
-
-        // ثبت در لاگ امنیتی
-        logAudit($db, $user['id'], $user['name'], 'login', 'auth', $user['id'], 'ورود موفقانه به سامانه');
-
-        jsonResponse(true, [
-            'token' => $token,
-            'expiresAt' => date('c', time() + (86400 * 30)),
-            'user' => formatUserPayload($user, $now)
-        ], 'ورود با موفقیت انجام شد.');
+        assertLoginAccountActive($db,$user);
+        if(emailSecuritySettings()['enabled']){
+            ensureEmailSecuritySchema($db);
+            if(!useTrustedDevice($db,$user))issueEmailChallenge($db,$user);
+        }
+        completeUserLogin($db,$user,$schemaFlags);
     }
 
     /**
@@ -310,6 +335,8 @@ if ($method === 'POST') {
         if ($email === '') {
             $email = $existing && !empty($existing['email']) ? (string)$existing['email'] : ($username . '@sync.local');
         }
+
+        if(emailSecuritySettings()['enabled'] && (!$existing || (array_key_exists('email',$p) && $email!==(string)($existing['email']??''))) && !usableLoginEmail($email))jsonResponse(false,null,'برای ورود با کُد، ایمیل واقعی و معتبر کاربر را وارد کنید.',400);
 
         $isSelf = $existing && (string)$existing['id'] === (string)$me['id'];
         if ($existing && (int)$existing['is_master'] === 1 && !$isSelf) {
@@ -390,6 +417,7 @@ if ($method === 'POST') {
 
         if ($existing && !$meMaster && $isSelf) {
             // Self-service: password + basic profile only (no role/lock/grants escalation)
+            if($email!==(string)($existing['email']??''))jsonResponse(false,null,'تغییر ایمیل ورود باید از مدیریت کارمندان یا دفتر هفت انجام شود.',403);
             $sqlSelf = 'UPDATE users SET name = :n, phone = :ph, password_hash = :h'
                 . ($passwordChanged ? ', token_version = token_version + 1' : '')
                 . ($schemaFlags['hasHashSalt'] ? ', hash_salt = :sa' : '')
@@ -419,11 +447,11 @@ if ($method === 'POST') {
 
         if (!$meMaster && !$isSelf) {
             // Staff inherit the tenant's service ceiling and subscription. Only Office 7 can change these.
-            $p['customEnabledModules'] = json_decode($me['allowed_modules_json'] ?? '{}', true) ?: [];
-            $p['allowedTabs'] = json_decode($me['allowed_tabs_json'] ?? '[]', true) ?: [];
+            $p['customEnabledModules'] = $existing ? (json_decode($existing['allowed_modules_json'] ?? '{}', true) ?: []) : [];
+            $p['allowedTabs'] = $existing ? (json_decode($existing['allowed_tabs_json'] ?? '[]', true) ?: []) : [];
             $plan = (string)($me['subscription_plan'] ?? 'pro');
             $expires = $me['subscription_expires_at'] ?? null;
-            $aiEnabled = (int)($me['ai_enabled'] ?? 1);
+            $aiEnabled = min($aiEnabled,(int)($me['ai_enabled'] ?? 1));
         }
 
         $existingProfile = ($existing && $schemaFlags['hasAppProfile'] && !empty($existing['app_profile_json']))
@@ -477,7 +505,7 @@ if ($method === 'POST') {
         }
 
         if ($existing) {
-            $sessionContextChanged=(string)$row['owner']!==(string)($existing['owner_admin_id']??'') || $row['role']!==$existing['role'];
+            $sessionContextChanged=(string)$row['owner']!==(string)($existing['owner_admin_id']??'') || $row['role']!==$existing['role'] || $row['email']!==(string)($existing['email']??'');
             $sql = 'UPDATE users SET owner_admin_id = :owner, name = :n, username = :u, email = :e,
                     password_hash = :h, role = :r, phone = :ph, company_name = :c, company_address = :a,
                     subscription_plan = :pl, subscription_expires_at = :ex, is_locked = :l,
