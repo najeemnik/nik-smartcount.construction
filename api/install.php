@@ -1,6 +1,7 @@
 <?php
 /** First-run bootstrap. Existing master accounts are never overwritten here. */
 require_once __DIR__ . '/db.php';
+require_once __DIR__.'/mail-configuration.php';
 sendSecurityHeaders();
 $secretDir = __DIR__ . '/.secrets';
 $keyFile = $secretDir . '/install.key';
@@ -21,7 +22,7 @@ if ($action === 'status' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     jsonResponse(false, null, 'Method not allowed.', 405);
 }
-if (!in_array($action, ['verify', 'complete'], true)) {
+if (!in_array($action, ['verify', 'complete', 'email_test', 'email_verify'], true)) {
     jsonResponse(false, null, 'Unknown action.', 404);
 }
 if (is_file($lockFile)) {
@@ -70,16 +71,25 @@ try {
         jsonResponse(false, null, 'مدیر اصلی در دیتابیس موجود است. نصب دوباره اجازه ندارد.', 409);
     }
     if ($action === 'verify') { jsonResponse(true, ['verified' => true]); }
+    if(in_array($action,['email_test','email_verify'],true)){
+        $input['mailAction']=$action==='email_test'?'send':'verify';
+        jsonResponse(true,mailConfigurationStep($input,'install'));
+    }
+
     $m = $input['master'] ?? null;
     if (!is_array($m)) { jsonResponse(false, null, 'معلومات مدیر اصلی الزامی است.', 400); }
     $username = strtolower(trim((string)($m['username'] ?? '')));
-    $hash = trim((string)($m['passwordHash'] ?? ''));
-    $salt = strtolower(trim((string)($m['hashSalt'] ?? $username)));
+    $password=$m['password']??null;
+    if(!is_string($password)||strlen($password)<12||strlen($password)>4096)jsonResponse(false,null,'رمز مدیر باید حداقل ۱۲ حرف باشد.',400);
+    $hash='sha256$'.hash('sha256',$username.'::nsc::'.$password);
+    $salt = $username;
     if (!preg_match('/^[a-z0-9._-]{3,80}$/', $username) || !preg_match('/^sha256\$[a-f0-9]{64}$/i', $hash)
         || $salt === '' || strlen($salt) > 80) {
         jsonResponse(false, null, 'نام کاربری یا ساختار رمز مدیر معتبر نیست.', 400);
     }
-    $email = strtolower(trim((string)($m['email'] ?? ''))) ?: $username . '@sync.local';
+    $email = strtolower(trim((string)($m['email'] ?? '')));
+    if(!usableLoginEmail($email))jsonResponse(false,null,'ایمیل واقعی مدیر اصلی الزامی است.',400);
+    mailConfigurationStep(['mailAction'=>'save','from'=>$input['from']??'','email'=>$email,'proof'=>$input['emailProof']??''],'install');
     $name = trim((string)($m['name'] ?? '')) ?: $username;
     $company = trim((string)($m['companyName'] ?? ''));
     if (strlen($email) > 150 || strlen($name) > 150 || strlen($company) > 200) {
@@ -97,6 +107,7 @@ try {
     $stmt = $db->prepare('INSERT INTO users (id, name, username, email, password_hash, hash_salt, role, company_name, subscription_plan, is_locked, is_active, is_master) VALUES (:id, :name, :username, :email, :hash, :salt, :role, :company, :plan, 0, 1, 1)');
     $stmt->execute(['id' => $id, 'name' => $name, 'username' => $username, 'email' => $email,
         'hash' => protectClientPasswordHash($hash), 'salt' => $salt, 'role' => 'master', 'company' => $company, 'plan' => 'lifetime']);
+    saveEmailConfiguration(trim((string)$input['from']));
     $db->commit();
     // The database master row also seals setup if the filesystem write fails.
     $sealed = file_put_contents($lockFile, json_encode(['locked_at' => gmdate('c'), 'master_id' => $id]), LOCK_EX);

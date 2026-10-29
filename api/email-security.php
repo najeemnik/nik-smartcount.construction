@@ -42,9 +42,9 @@ function usableLoginEmail(string $email): bool {
     return filter_var($email,FILTER_VALIDATE_EMAIL)!==false && !preg_match('/[\r\n]/',$email)
         && !preg_match('/@(sync\.local|example\.(com|org|net)|[^@]+\.invalid)$/i',$email);
 }
-function sendLoginCode(string $to,string $code): bool {
+function sendLoginCode(string $to,string $code,?string $from=null): bool {
     if(!function_exists('mail'))return false;
-    $from=emailSecuritySettings()['from'];
+    $from=$from??emailSecuritySettings()['from'];
     if(!is_string($from)||!filter_var($from,FILTER_VALIDATE_EMAIL)||preg_match('/[\r\n]/',$from))return false;
     $subject='NiK Smart Count - Login verification code';
     $body="Your login verification code is: $code\n\nValid for 5 minutes. Do not share this code.\nIf you did not request a login, change your password and contact your administrator.\n\nNiK Smart Count";

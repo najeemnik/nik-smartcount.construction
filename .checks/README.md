@@ -40,3 +40,14 @@ The new default on a real installation is email MFA enabled, with security@nik-s
 Browser checks use Playwright Core and Chromium from the external test runtime. The compiled-client adapter patch-client-permissions.cjs uses Node and acorn 8.15.0 (build time only; PHP hosting needs neither Node nor npm). It starts from the previous preserved upstream gzip bundle and refuses duplicate application or mismatched helper structure. Keep it for review/rebuilding; it is not a substitute for the missing original React/TypeScript source. workspace-permissions.js and login-email.js are readable production source files.
 
 Preserved upstream client baseline for this adapter: commit bf6d83f, file nsc-accounting-r3.js.gz. The adapter makes no network requests. Its output is gzip-compressed after JavaScript parsing succeeds. If original frontend source becomes available, port these checks there and replace the adapter with the normal frontend build.
+
+
+Installer and design review checks:
+
+    python3 .checks/start-installer-test.py
+    python3 .checks/installer-email.py
+    python3 .checks/start-installer-test.py
+    node .checks/browser-installer.cjs
+    node .checks/browser-experience.cjs
+
+The start helper uses the existing LOCAL nsc-preview-db container, creates a uniquely named nsc_install_audit_* database, and starts nsc-install-test-web on loopback port 8082. It uses external local audit env files and a fake mail sink; it must never be adapted to point at a production database. It creates no live email, never prints the generated key/password, and replaces only its dedicated test web container. Each API/browser installer suite needs a fresh instance because a completed install seals itself. Local database root access, Docker, the existing nsc-audit-php image and the external browser runtime are required. The source checkout is not used as the test document root. browser-experience.cjs uses the existing audit site on port 8081 with its fixture accounts; run it after legacy tests restore disabled MFA there.
