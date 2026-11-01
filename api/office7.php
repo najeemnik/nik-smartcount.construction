@@ -20,6 +20,7 @@ try {
     $alterStatements = [
         'owner_admin_id'   => "ALTER TABLE users ADD COLUMN owner_admin_id VARCHAR(64) NULL AFTER id",
         'hash_salt'        => "ALTER TABLE users ADD COLUMN hash_salt VARCHAR(80) NULL AFTER password_hash",
+        'deleted_at'       => 'ALTER TABLE users ADD COLUMN deleted_at DATETIME NULL',
         'is_active'        => "ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER subscription_expires_at",
         'ai_enabled'       => "ALTER TABLE users ADD COLUMN ai_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER is_master",
         'token_version'    => "ALTER TABLE users ADD COLUMN token_version INT NOT NULL DEFAULT 0 AFTER ai_enabled",
@@ -149,7 +150,7 @@ if ($method === 'GET') {
         $tparams = [];
         if ($meId !== '' && !$meMaster) {
             $tenantRootId = $meOwnerId !== '' ? $meOwnerId : ($meServerId !== '' ? $meServerId : $meId);
-            $sql .= " WHERE id = :me OR owner_admin_id = :me2 OR LOWER(username) = LOWER(:mu) OR owner_admin_id = :troot OR id = :troot2";
+            $sql .= " WHERE (id = :me OR owner_admin_id = :me2 OR LOWER(username) = LOWER(:mu) OR owner_admin_id = :troot OR id = :troot2)";
             $tparams = [
                 'me' => $meId,
                 'me2' => $meId,
@@ -162,6 +163,7 @@ if ($method === 'GET') {
             $sql='SELECT * FROM users WHERE id=:only_me';
             $tparams=['only_me'=>$meId];
         }
+        $sql .= stripos($sql," WHERE ")===false?" WHERE deleted_at IS NULL":" AND deleted_at IS NULL";
         $sql .= " ORDER BY is_master DESC, created_at ASC";
         $stmt = $db->prepare($sql);
         $stmt->execute($tparams);
@@ -282,7 +284,7 @@ if ($method === 'POST') {
             }
         }
 
-        if (!$target) {
+        if (!$target || !empty($target['deleted_at'])) {
             jsonResponse(false, null, 'کاربر مورد نظر در دیتابیس یافت نشد.', 404);
         }
 
@@ -316,7 +318,8 @@ if ($method === 'POST') {
         }
         if (isset($input['ownerAdminId']) && trim((string)$input['ownerAdminId']) !== '') {
             $ownerId=trim((string)$input['ownerAdminId']);
-            $ownerCheck=$db->prepare('SELECT id FROM users WHERE id=:id AND role=:role AND is_master=0');
+            lockOwnerAssignment($db,$ownerId);
+            $ownerCheck=$db->prepare('SELECT id FROM users WHERE id=:id AND role=:role AND is_master=0 AND deleted_at IS NULL');
             $ownerCheck->execute(['id'=>$ownerId,'role'=>'admin']);
             if($ownerId===$userId||!$ownerCheck->fetch())jsonResponse(false,null,'مالک شرکت معتبر نیست.',400);
         }

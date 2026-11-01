@@ -127,7 +127,7 @@ function authenticateUser(bool $requireMaster = false): array {
     $stmt->execute(['id' => $payload['user_id']]);
     $user = $stmt->fetch();
 
-    if (!$user || (int)($user['is_locked'] ?? 0) === 1 || (array_key_exists('is_active', $user) && (int)$user['is_active'] === 0)) {
+    if (!$user || !empty($user['deleted_at']) || (int)($user['is_locked'] ?? 0) === 1 || (array_key_exists('is_active', $user) && (int)$user['is_active'] === 0)) {
         logSyncReject($db, ['id' => (string)($payload['user_id'] ?? ''), 'name' => 'unknown'], '', 'auth:user-missing-locked-or-inactive');
         jsonResponse(false, null, 'حساب کاربری شما غیرفعال یا مسدود شده است.', 403);
     }
@@ -454,4 +454,12 @@ function protectClientPasswordHash(string $digest): string {
         jsonResponse(false, null, 'ساختار رمز ارسالی معتبر نیست.', 400);
     }
     return 'nsc-v2$' . password_hash($digest, PASSWORD_BCRYPT, ['cost' => 12]);
+}
+
+/** Serialize owner assignment with staff quota checks and owner removal. */
+function lockOwnerAssignment(PDO $db,string $ownerId): void {
+    $name='nsc_staff_'.substr(hash('sha256',$ownerId),0,40);
+    $q=$db->prepare('SELECT GET_LOCK(:name,5)');$q->execute(['name'=>$name]);
+    if((int)$q->fetchColumn()!==1)jsonResponse(false,null,'دوباره تلاش کنید.',503);
+    register_shutdown_function(function()use($db,$name){try{$q=$db->prepare('SELECT RELEASE_LOCK(:name)');$q->execute(['name'=>$name]);}catch(Throwable $e){}});
 }

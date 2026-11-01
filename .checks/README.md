@@ -51,3 +51,13 @@ Installer and design review checks:
     node .checks/browser-experience.cjs
 
 The start helper uses the existing LOCAL nsc-preview-db container, creates a uniquely named nsc_install_audit_* database, and starts nsc-install-test-web on loopback port 8082. It uses external local audit env files and a fake mail sink; it must never be adapted to point at a production database. It creates no live email, never prints the generated key/password, and replaces only its dedicated test web container. Each API/browser installer suite needs a fresh instance because a completed install seals itself. Local database root access, Docker, the existing nsc-audit-php image and the external browser runtime are required. The source checkout is not used as the test document root. browser-experience.cjs uses the existing audit site on port 8081 with its fixture accounts; run it after legacy tests restore disabled MFA there.
+
+November account-removal and save regression checks:
+
+- `account-seed.php` initializes schema and two synthetic accounts, only in `nsc_audit`; it loads passwords from the external `/run/nsc-accounts.json` mount. Use once on a fresh isolated database.
+- `accounts-flow.py` covers account removal, retained workspace records, revoked sessions, cross-company restrictions, owner-child protection and quota reuse (MFA enabled, local fake mail sink required).
+- `browser-accounts.cjs` covers the unchanged master/owner/employee login flows and removal controls in both management screens. It uses the external Playwright runtime at `/workspace/nsc-test/tools/node_modules/playwright-core`, overrideable with `NSC_PLAYWRIGHT_MODULE`.
+- `workspace-transport.py` covers standard form saves, binary photo/PDF transport and scoped saved-file references, spoofed files/digests, CSRF, tenant checks and request/file limits. Run the existing fixtures first and disable MFA only in this audit copy.
+- `browser-workspace-save.cjs` injects a host-style non-JSON 403, verifies real server readback, binary logo upload/reuse, permission-denial preservation, retry, full reload recovery and incomplete acknowledgment rejection. Host rejection is simulated; it is not proof of a particular live WAF rule.
+
+All new tests target loopback port 8081 and the throwaway nsc_audit database with an external credentials file at `/workspace/nsc-test/accounts.json`. Never point them at production. Run suites sequentially; they intentionally mutate synthetic records and settings. `.checks` is web-denied and should not be in the deployment update ZIP.

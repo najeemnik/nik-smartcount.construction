@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `avatar_url` TEXT NULL,
   `subscription_plan` VARCHAR(32) NOT NULL DEFAULT 'pro',
   `subscription_expires_at` DATETIME NULL,
+  `deleted_at` DATETIME NULL,
   `is_active` TINYINT(1) NOT NULL DEFAULT 1,
   `is_locked` TINYINT(1) NOT NULL DEFAULT 0,
   `is_master` TINYINT(1) NOT NULL DEFAULT 0,

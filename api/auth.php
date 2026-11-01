@@ -24,6 +24,7 @@ function ensureAuthUserSchema(PDO $db): array {
         $alterStatements = [
             'owner_admin_id'   => "ALTER TABLE users ADD COLUMN owner_admin_id VARCHAR(64) NULL AFTER id",
             'hash_salt'        => "ALTER TABLE users ADD COLUMN hash_salt VARCHAR(80) NULL AFTER password_hash",
+            'deleted_at'       => 'ALTER TABLE users ADD COLUMN deleted_at DATETIME NULL',
             'is_active'        => "ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER subscription_expires_at",
             'ai_enabled'       => "ALTER TABLE users ADD COLUMN ai_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER is_master",
             'token_version'    => "ALTER TABLE users ADD COLUMN token_version INT NOT NULL DEFAULT 0 AFTER ai_enabled",
@@ -222,7 +223,7 @@ if ($method === 'POST') {
         // جستجوی کاربر با نام کاربری یا ایمیل (بدون حساسیت به حروف بزرگ و کوچک)
         $stmt = $db->prepare("
             SELECT * FROM users
-            WHERE LOWER(username) = LOWER(:u1) OR LOWER(email) = LOWER(:u2)
+            WHERE (LOWER(username) = LOWER(:u1) OR LOWER(email) = LOWER(:u2)) AND deleted_at IS NULL
             LIMIT 1
         ");
         $stmt->execute(['u1' => $username, 'u2' => $username]);
@@ -370,11 +371,13 @@ if ($method === 'POST') {
                 $lockStmt = $db->prepare('SELECT GET_LOCK(:name, 5)');
                 $lockStmt->execute(['name' => $quotaLock]);
                 if ((int)$lockStmt->fetchColumn() !== 1) jsonResponse(false, null, 'لطفاً دوباره تلاش کنید.', 503);
-                $countStmt = $db->prepare('SELECT COUNT(*) FROM users WHERE owner_admin_id=:owner AND is_master=0');
+                $countStmt = $db->prepare('SELECT COUNT(*) FROM users WHERE owner_admin_id=:owner AND is_master=0 AND deleted_at IS NULL');
                 $countStmt->execute(['owner' => $me['id']]);
                 if ((int)$countStmt->fetchColumn() >= $staffLimit) jsonResponse(false, null, 'تعداد کارمندان به حد مجاز تعیین‌شده رسیده است.', 403);
             }
         }
+
+        if($existing && !empty($existing['deleted_at']))jsonResponse(false,null,'این حساب حذف شده است؛ یک نام کاربری تازه انتخاب کنید.',409);
 
         // Email uniqueness check across OTHER rows (auto-disambiguate @sync.local placeholder emails)
         $s = $db->prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(:e) LIMIT 1');
@@ -406,7 +409,8 @@ if ($method === 'POST') {
             : (string)$me['id'];
 
         if ($ownerId !== null && !$isSelf) {
-            $os = $db->prepare('SELECT id FROM users WHERE id=:id AND role=:role AND is_master=0');
+            lockOwnerAssignment($db,$ownerId);
+            $os = $db->prepare('SELECT id FROM users WHERE id=:id AND role=:role AND is_master=0 AND deleted_at IS NULL');
             $os->execute(['id'=>$ownerId,'role'=>'admin']);
             if (!$os->fetch() || ($fid !== '' && $ownerId === $fid)) jsonResponse(false,null,'مالک شرکت معتبر نیست.',400);
         }
@@ -594,10 +598,23 @@ if ($method === 'POST') {
             }
         }
         if (!$meMaster) { assertModulePermission($me, 'users', 'delete'); }
-        $s = $db->prepare('DELETE FROM users WHERE id = :id');
-        $s->execute(['id' => $target['id']]);
-        logAudit($db, $me['id'], $me['name'], 'delete', 'user_sync', $target['id'], 'User deleted from device: ' . $target['username']);
-        jsonResponse(true, ['deleted' => true], 'کاربر از سرور حذف شد.');
+        $db->beginTransaction();
+        try {
+            // Share the owner quota lock with staff creation; no account may attach during deletion.
+            if($target['role']==='admin'){
+                $ownerLock='nsc_staff_'.substr(hash('sha256',(string)$target['id']),0,40);
+                $lock=$db->prepare('SELECT GET_LOCK(:name,5)');$lock->execute(['name'=>$ownerLock]);
+                if((int)$lock->fetchColumn()!==1){$db->rollBack();jsonResponse(false,null,'دوباره تلاش کنید.',503);}
+                $children=$db->prepare('SELECT COUNT(*) FROM users WHERE owner_admin_id=:id AND deleted_at IS NULL');$children->execute(['id'=>$target['id']]);
+                if((int)$children->fetchColumn()>0){$db->rollBack();jsonResponse(false,null,'این مالک کارمند دارد؛ ابتدا کارمندان را منتقل یا حذف کنید.',409);}
+            }
+            $s=$db->prepare('UPDATE users SET deleted_at=COALESCE(deleted_at,NOW()),is_active=0,is_locked=1,token_version=token_version+1 WHERE id=:id');
+            $s->execute(['id'=>$target['id']]);
+            $db->commit();
+        }catch(Throwable $e){if($db->inTransaction())$db->rollBack();throw $e;}
+
+        logAudit($db, $me['id'], $me['name'], 'delete', 'user_sync', $target['id'], 'Account access removed; financial records preserved: ' . $target['username']);
+        jsonResponse(true, ['deleted' => true], 'دسترسی حساب حذف شد؛ اسناد مالی محفوظ ماند.');
     }
 
     if ($action === 'logout_all') {

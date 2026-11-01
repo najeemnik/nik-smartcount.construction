@@ -22,7 +22,7 @@ function ensureEmailSecuritySchema(PDO $db): void {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 function assertLoginAccountActive(PDO $db, array $user): void {
-    if((int)($user['is_locked']??0)===1||(int)($user['is_active']??1)!==1)jsonResponse(false,null,'حساب غیرفعال یا مسدود شده است.',403);
+    if(!empty($user['deleted_at'])||(int)($user['is_locked']??0)===1||(int)($user['is_active']??1)!==1)jsonResponse(false,null,'حساب غیرفعال یا مسدود شده است.',403);
     if((int)($user['is_master']??0)!==1&&!empty($user['subscription_expires_at'])&&strtotime($user['subscription_expires_at'])<=time())jsonResponse(false,null,'اعتبار حساب پایان یافته است.',403);
     if(!empty($user['owner_admin_id'])){
         $q=$db->prepare('SELECT * FROM users WHERE id=:id AND role="admin" AND is_master=0');$q->execute(['id'=>$user['owner_admin_id']]);

@@ -1,6 +1,7 @@
 <?php
 /** Canonical persistence bridge for the preserved construction client. */
 require_once __DIR__ . '/db.php';
+require_once __DIR__.'/workspace-files.php';
 sendSecurityHeaders();
 $user = authenticateUser();
 $db = Database::getConnection();
@@ -31,7 +32,22 @@ function workspaceRows($value, string $key, string $module, array $u): array {
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 if (!in_array($method, ['GET','POST'], true)) jsonResponse(false,null,'Method not allowed.',405);
 if ($method === 'POST') {
- $input = getJsonInput();
+ $type=strtolower((string)($_SERVER['CONTENT_TYPE']??''));
+ if(str_starts_with($type,'multipart/form-data')||str_starts_with($type,'application/x-www-form-urlencoded')){
+  // Standard form transport for shared hosts which reject JSON request bodies. Same auth/CSRF/tenant checks apply.
+  if(count($_POST)!==1||!isset($_POST['payload'])||!is_string($_POST['payload']))jsonResponse(false,null,'فورم ذخیره معتبر نیست.',400);
+  $raw=$_POST['payload'];
+  if(strlen($raw)>21*1024*1024)jsonResponse(false,null,'حجم معلومات بیش از حد مجاز است.',413);
+  $input=json_decode($raw,true);
+  if(json_last_error()!==JSON_ERROR_NONE||!is_array($input)||!str_starts_with(ltrim($raw),'{'))jsonResponse(false,null,'معلومات ذخیره باید JSON معتبر باشد.',400);
+ }else{$input=getJsonInput();}
+
+ if(($input['fileTransport']??null)===1){
+  $stored=$db->prepare('SELECT state_json FROM app_workspaces WHERE tenant_id=:tenant');$stored->execute(['tenant'=>$tenant]);
+  $encoded=$stored->fetchColumn();$rawState=$encoded?json_decode($encoded,true,512,JSON_THROW_ON_ERROR):[];$visible=[];
+  foreach($map as $key=>$module)if(canAccessModule($user,$module,'view',null,true))$visible[$key]=workspaceRows($rawState[$key]??[],$key,$module,$user);
+  $input=decodeWorkspaceFiles($input,$visible);
+ }elseif(!empty($_FILES)){jsonResponse(false,null,'فایل بدون معلومات معتبر مجاز نیست.',400);}
  if(isset($input['tenantId']) && !hash_equals($tenant,(string)$input['tenantId']))jsonResponse(false,null,'حساب فعال تغییر کرده است. صفحه را دوباره باز کنید.',403);
  if (!isset($input['baseVersion']) || !is_int($input['baseVersion']) || !isset($input['state']) || !is_array($input['state'])) jsonResponse(false,null,'نسخهٔ پایه و معلومات معتبر الزامی است.',400);
  foreach ($input['state'] as $key=>$value) {
