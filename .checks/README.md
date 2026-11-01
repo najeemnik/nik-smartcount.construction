@@ -72,3 +72,11 @@ Session/mobile/language changes:
 - `email-security.py` now checks 31 cases. Remembered devices skip codes without a five-login counter; the browser/API suites force expiry to verify the 30-day boundary. The five-attempt email-code lockout remains unchanged.
 
 Do not include `.checks`, synthetic credentials, runtime overrides or local mailboxes in the deployment ZIP. Security report counts exclude browser assertions and syntax checks.
+
+November 2 functional and training checks:
+
+- `browser-accounting-flow.cjs`: a new synthetic company, real project/supplier/invoice forms, quantity and price, partial payment, 7000 AFN conversion at 70, exact cents, default-project charts and payment choices, 82% paid ratio, 25 USD debt, refresh persistence, real trial balance, reports and exchange navigation.
+- `browser-payroll-flow.cjs`: synthetic fixture project, actual employee profile, two daily units at 1000 AFN, accrual without cash, a separate 1500 AFN cash payment, 500 AFN balance and reload persistence. It does not touch the main guide company's invoices. Optional `NSC_CAPTURE_TRAINING=1` captures only this synthetic example after the other training captures.
+- `browser-settlement-flow.cjs`: restores authorized synthetic data to a fresh synthetic company, selects one exact unpaid invoice, pays its 25 USD balance, verifies the bill/linked payment and zero debt after reload.
+- `patch-client-accounting.cjs`: guarded adapter applied after the permission adapter. It preserves monetary cents, synchronizes the default project, fixes chart project/financial scope, uses the same normalized liability calculation as the main ledger and compares payment percentages in a common currency. It also restores exchange event navigation. It does not migrate company data or change server database schema. Baseline: permission-adapted bundle at `0c5a360`.
+- `.checks/training/README.md`: source and offline validation workflow for the 40-chapter, 59-screenshot training HTML, narration scripts and printable PDF. Generated deliverables remain separate from the host deployment package.

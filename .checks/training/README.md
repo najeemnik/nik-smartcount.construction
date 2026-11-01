@@ -1,0 +1,14 @@
+# Reproducible training guide
+
+All screen capture and functional tests use the loopback audit site and synthetic accounts; never aim these scripts at production. Credentials are read only from the existing external audit file. Screenshots must not show real passwords or verification codes. The capture script forces generated password fields to `type=password` before capture.
+
+The PHP audit fixture refuses any database except `nsc_audit`. Disable email MFA only in that isolated copy before running the real UI accounting scenario. The fake sendmail sink is used temporarily to capture the verification dialog, without filling or displaying a real code.
+
+1. Apply `.checks/patch-client-permissions.cjs` to its documented upstream baseline if rebuilding, then `.checks/patch-client-accounting.cjs`. The latter refuses duplicate application and checks the entire resulting JavaScript module before writing the gzip file. The accounting adapter's baseline is the permission-adapted client at commit `0c5a360`.
+2. Run `.checks/browser-accounting-flow.cjs` against the isolated copy. It creates a fresh synthetic company, then uses actual UI forms to create a project, supplier and two invoices (partial USD and paid AFN). It verifies 137.50 USD cost, 112.50 USD paid, 25.00 USD debt, 82% payment ratio, reload persistence, trial balance, executive report and exchange navigation. It saves a non-secret synthetic actor descriptor outside the checkout.
+3. Run `capture.cjs`, then `capture-extra.cjs` from the repository root. PNGs, annotated control coordinates and form inventories are stored outside the checkout at `/workspace/releases/nik-training-2026-11-02`.
+4. Run `.checks/browser-payroll-flow.cjs` with `NSC_CAPTURE_TRAINING=1` after the captures to verify and illustrate the separate daily-wage example (2000 AFN earned, 1500 paid, 500 remaining). `browser-settlement-flow.cjs` clones only synthetic data to a new synthetic company and verifies a specific 25 USD bill settlement, preserving the guide actor.
+5. Run `chapters.py`, then `build.py`. The output is one self-contained HTML, full voice script and short introduction script. All screenshot data are embedded; no network service is required to open the guide.
+6. Run `test-guide.cjs`. It verifies the guide offline, chapter navigation, every image, voice text, zoom, keyboard controls, recording mode, mobile layout, and PDF generation. Visually inspect the produced guide/video previews and PDF page count afterward.
+
+Narration and expectations are training material, not a claim that every financial workflow has been tested. The coverage report distinguishes actual transaction assertions, interface/form inspection and outstanding end-to-end validation. The guide's screenshot controls are illustrative; they do not execute live accounting actions.
