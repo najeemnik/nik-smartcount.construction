@@ -57,6 +57,6 @@ for i,c in enumerate(chapters,1):voice+=f"{i:02}. {c['title']}\n{c['voice']}\n\n
 (OUT/'NiK_Voice_Script_FA.txt').write_text(voice)
 shorttext='NiK Smart Count — سناریوی معرفی حدود ۹۰ ثانیه\n۹ صحنه؛ حدود ۱۰ ثانیه برای هر صحنه؛ زمان خواندن خودت را تمرین کن.\n\n'
 for n,key in enumerate(short):
- c=next(c for c in chapters if c['id']==key);shorttext+=f'{n*10:02}–{(n+1)*10:02} ثانیه | {c["title"]}\n{c["short"]}\nنمای روی صفحه: {c["images"][0]}\n\n'
+ c=next(c for c in chapters if c['id']==key);shorttext+=f'{n*10:02}–{(n+1)*10:02} ثانیه | {c["title"]}\n{c["short"]}\nفایل تصویر: INTRO_90S_FRAMES/{n+1:02}.png\n\n'
 (OUT/'NiK_90_Second_Video_FA.txt').write_text(shorttext)
 print('Built self-contained HTML, full narration and 90-second script:',len(chapters),'chapters;',len(shots),'screenshots;',len(page.encode()),'bytes')

@@ -12,3 +12,5 @@ The PHP audit fixture refuses any database except `nsc_audit`. Disable email MFA
 6. Run `test-guide.cjs`. It verifies the guide offline, chapter navigation, every image, voice text, zoom, keyboard controls, recording mode, mobile layout, and PDF generation. Visually inspect the produced guide/video previews and PDF page count afterward.
 
 Narration and expectations are training material, not a claim that every financial workflow has been tested. The coverage report distinguishes actual transaction assertions, interface/form inspection and outstanding end-to-end validation. The guide's screenshot controls are illustrative; they do not execute live accounting actions.
+
+7. Optional: run `export-intro.cjs` to render nine annotated 1920×1080 PNG introduction frames from the offline HTML. Controls are hidden for editing; no live app actions are performed. Match `01.png` through `09.png` to the short narration timeline.
