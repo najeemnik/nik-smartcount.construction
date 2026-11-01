@@ -1,10 +1,12 @@
 <?php
 /**
  * NSC Database Connection & Security Helpers (Phase 10 Security Hardened)
- * Strict PDO Implementation with Zero-Vulnerability Architecture
+ * PDO implementation and shared authentication checks
  */
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__.'/account-status.php';
+require_once __DIR__.'/web-session.php';
 set_exception_handler(function (Throwable $e): void {
     error_log('NSC request failed: ' . get_class($e) . ': ' . $e->getMessage());
     if (!headers_sent()) header('Content-Type: application/json; charset=UTF-8');
@@ -113,42 +115,30 @@ function authenticateUser(bool $requireMaster = false): array {
         ?? $headers['authorization']
         ?? ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
 
-    if (!preg_match('/Bearer\s+(\S+)/', $authHeader, $matches)) {
-        jsonResponse(false, null, 'عدم دسترسی: توکن احراز هویت ارسال نشده است.', 401);
-    }
-
-    $token = $matches[1];
-    $payload = verifyToken($token);
-    if (!$payload) {
-        logSyncReject($db, [], '', 'auth:invalid-or-expired-token');
-        jsonResponse(false, null, 'توکن امنیتی نامعتبر یا منقضی شده است. لطفاً دوباره وارد شوید.', 401);
-    }
+    $web=null;
+    if(preg_match('/^Bearer\s+(\S+)$/D',$authHeader,$matches)){
+        $payload=verifyToken($matches[1]);
+        if(!$payload)jsonResponse(false,['code'=>'SESSION_EXPIRED'],'نشست شما پایان یافته است؛ دوباره وارد شوید.',401);
+    }elseif($authHeader===''){
+        $kind=webSessionKind($requireMaster);$web=readWebSession($db,$kind);
+        if(!$web){clearWebCookie($kind);jsonResponse(false,['code'=>'SESSION_EXPIRED'],'نشست شما پایان یافته است؛ دوباره وارد شوید.',401);}
+        $payload=['user_id'=>$web['user_id'],'ver'=>(int)$web['token_version'],'email_verified'=>(int)$web['email_verified']===1];
+    }else{jsonResponse(false,['code'=>'SESSION_INVALID'],'دوباره وارد حساب شوید.',401);}
     $stmt = $db->prepare("SELECT * FROM users WHERE id = :id LIMIT 1");
     $stmt->execute(['id' => $payload['user_id']]);
     $user = $stmt->fetch();
 
-    if (!$user || !empty($user['deleted_at']) || (int)($user['is_locked'] ?? 0) === 1 || (array_key_exists('is_active', $user) && (int)$user['is_active'] === 0)) {
-        logSyncReject($db, ['id' => (string)($payload['user_id'] ?? ''), 'name' => 'unknown'], '', 'auth:user-missing-locked-or-inactive');
-        jsonResponse(false, null, 'حساب کاربری شما غیرفعال یا مسدود شده است.', 403);
-    }
-
+    if(!$user)jsonResponse(false,['code'=>'SESSION_INVALID'],'دوباره وارد حساب شوید.',401);
     // ابطال نشست‌ها: توکن‌های صادرشده قبل از logout_all نامعتبرند
     require_once __DIR__.'/email-security.php';
-    if(emailSecuritySettings()['enabled'] && ($payload['email_verified']??false)!==true)jsonResponse(false,null,'برای تأیید ایمیل دوباره وارد شوید.',401);
+    if(emailSecuritySettings()['enabled'] && ($payload['email_verified']??false)!==true)jsonResponse(false,['code'=>'EMAIL_VERIFICATION_REQUIRED'],'برای تأیید ایمیل دوباره وارد شوید.',401);
     $tokenVersion = (int)($payload['ver'] ?? 0);
     if ($tokenVersion !== (int)($user['token_version'] ?? 0)) {
         logSyncReject($db, $user, '', 'auth:token-version-mismatch');
-        jsonResponse(false, null, 'نشست امنیتی شما باطل شده است. لطفاً دوباره وارد شوید.', 401);
+        jsonResponse(false, ['code'=>'SESSION_REVOKED'], 'نشست شما باطل شده است؛ دوباره وارد شوید.', 401);
     }
 
-    // بررسی انقضای اشتراک یا دسترسی کاربر (به جز مدیر ارشد دفتر هفت)
-    if ((int)($user['is_master'] ?? 0) !== 1 && !empty($user['subscription_expires_at'])) {
-        $expTs = strtotime((string)$user['subscription_expires_at']);
-        if ($expTs !== false && $expTs <= time()) {
-            logSyncReject($db, $user, (string)($user['username'] ?? ''), 'auth:subscription-expired');
-            jsonResponse(false, null, 'مدت اعتبار اشتراک یا دسترسی حساب شما به پایان رسیده است.', 403);
-        }
-    }
+    $restriction=accountRestriction($db,$user);if($restriction)denyAccountRestriction($restriction);
 
     if ($requireMaster && (int)$user['is_master'] !== 1) {
         logSyncReject($db, $user, '', 'auth:master-required');
@@ -159,13 +149,10 @@ function authenticateUser(bool $requireMaster = false): array {
         $ownerStmt = $db->prepare('SELECT * FROM users WHERE id = :id AND role = :role AND is_master = 0 LIMIT 1');
         $ownerStmt->execute(['id' => $user['owner_admin_id'], 'role' => 'admin']);
         $owner = $ownerStmt->fetch();
-        if (!$owner || (int)($owner['is_locked'] ?? 0) === 1 || (int)($owner['is_active'] ?? 1) === 0
-            || (!empty($owner['subscription_expires_at']) && strtotime($owner['subscription_expires_at']) <= time())) {
-            jsonResponse(false, null, 'دسترسی شرکت غیرفعال یا منقضی شده است.', 403);
-        }
         $user['_tenant_owner'] = $owner;
     }
 
+    if($web){enforceWebCsrf($web);$user['_web_session']=$web['session_hash'];}
     return $user;
 }
 

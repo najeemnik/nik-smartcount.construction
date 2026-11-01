@@ -4,6 +4,7 @@ const base='http://127.0.0.1:8081',accounts=JSON.parse(fs.readFileSync('/workspa
 async function api(path,data){const r=await ctx.request.fetch(base+'/api/'+path,{method:data?'POST':'GET',data,headers:{Authorization:'Bearer '+token}});const body=await r.json();assert(r.ok()&&body.success,body.error||path);return body.data}
 async function waitSaved(){for(let i=0;i<100;i++){if(await p.evaluate(async()=>typeof window.NSC_PERSIST==='function'&&(await window.NSC_PERSIST()).success))return;await p.waitForTimeout(100)}throw Error('Pending save was not acknowledged')}
 async function writeSettings(settings){return p.evaluate(async settings=>{localStorage.setItem('nik_smart_count_appSettings',JSON.stringify(settings));return window.NSC_PERSIST()},settings)}
+await ctx.addInitScript(()=>{if(!localStorage.getItem('nsc_portal_lang'))localStorage.setItem('nsc_portal_lang','fa')});
 try{
  let r=await ctx.request.post(base+'/api/auth.php?action=login',{data:accounts[0]});token=(await r.json()).data.token;assert(token);const before=await api('workspace.php');await api('workspace.php',{baseVersion:before.stateVersion,state:{appSettings:{}}});await p.goto(base+'/login.php');await p.evaluate(t=>localStorage.setItem('nsc_auth_token',t),token);await p.goto(base+'/workspace.php');await p.waitForFunction(()=>window.NSC_READY===true);
  const original=before.state.appSettings;let jsonRequests=0,formRequests=0;

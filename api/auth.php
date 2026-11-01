@@ -24,6 +24,7 @@ function ensureAuthUserSchema(PDO $db): array {
         $alterStatements = [
             'owner_admin_id'   => "ALTER TABLE users ADD COLUMN owner_admin_id VARCHAR(64) NULL AFTER id",
             'hash_salt'        => "ALTER TABLE users ADD COLUMN hash_salt VARCHAR(80) NULL AFTER password_hash",
+            'cookie_session_enabled' => 'ALTER TABLE users ADD COLUMN cookie_session_enabled TINYINT NOT NULL DEFAULT 0',
             'deleted_at'       => 'ALTER TABLE users ADD COLUMN deleted_at DATETIME NULL',
             'is_active'        => "ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER subscription_expires_at",
             'ai_enabled'       => "ALTER TABLE users ADD COLUMN ai_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER is_master",
@@ -150,7 +151,8 @@ function verifyUserPassword(array $user, string $password, string $loginInput = 
 }
 
 
-function completeUserLogin(PDO $db,array $user,array $schemaFlags): void {
+function completeUserLogin(PDO $db,array $user,array $schemaFlags,bool $browser=false): void {
+    if($browser)$user=migrateCookieUser($db,$user);
     $attemptKey=function_exists('mb_strtolower')?mb_strtolower((string)$user['username'],'UTF-8'):strtolower((string)$user['username']);
         // ورود موفق: پاک‌سازی تلاش‌های ناموفق قبلی همین کاربر
         try {
@@ -177,11 +179,10 @@ function completeUserLogin(PDO $db,array $user,array $schemaFlags): void {
         // ثبت در لاگ امنیتی
         logAudit($db, $user['id'], $user['name'], 'login', 'auth', $user['id'], 'ورود موفقانه به سامانه');
 
-        jsonResponse(true, [
-            'token' => $token,
-            'expiresAt' => date('c', time() + (86400 * 30)),
-            'user' => formatUserPayload($user, $now)
-        ], 'ورود با موفقیت انجام شد.');
+        $web=issueWebSession($db,$user,(bool)emailSecuritySettings()['enabled']);
+        $response=['authenticated'=>true,'expiresAt'=>date('c',time()+86400*30),'user'=>formatUserPayload($user,$now),...$web];
+        if(!$browser)$response['token']=$token; // Credential/MFA-based API clients remain compatible; browser UI never receives a bearer token.
+        jsonResponse(true,$response,'ورود با موفقیت انجام شد.');
 }
 $schemaFlags = ensureAuthUserSchema($db);
 
@@ -192,7 +193,7 @@ if ($method === 'POST') {
     if($action==='verify_email_code'){
         ensureEmailSecuritySchema($db);
         $user=verifyEmailChallenge($db,$input);
-        completeUserLogin($db,$user,$schemaFlags);
+        completeUserLogin($db,$user,$schemaFlags,!empty($user['_browserLogin']));
     }
 
     if (in_array($action, ['login', 'master_login'], true)) {
@@ -223,7 +224,7 @@ if ($method === 'POST') {
         // جستجوی کاربر با نام کاربری یا ایمیل (بدون حساسیت به حروف بزرگ و کوچک)
         $stmt = $db->prepare("
             SELECT * FROM users
-            WHERE (LOWER(username) = LOWER(:u1) OR LOWER(email) = LOWER(:u2)) AND deleted_at IS NULL
+            WHERE (LOWER(username) = LOWER(:u1) OR LOWER(email) = LOWER(:u2))
             LIMIT 1
         ");
         $stmt->execute(['u1' => $username, 'u2' => $username]);
@@ -235,21 +236,6 @@ if ($method === 'POST') {
                 $insStmt->execute(['ident' => $attemptKey, 'ip' => $clientIp]);
             } catch (Exception $e) { error_log('Rate-limit record failed: ' . $e->getMessage()); }
             jsonResponse(false, null, 'نام کاربری یا رمز عبور اشتباه است.', 401);
-        }
-
-        if ((int)($user['is_locked'] ?? 0) === 1) {
-            jsonResponse(false, null, 'حساب کاربری شما توسط مدیر ارشد مسدود گردیده است.', 403);
-        }
-
-        if (array_key_exists('is_active', $user) && (int)$user['is_active'] === 0) {
-            jsonResponse(false, null, 'حساب کاربری شما غیرفعال گردیده است. با مدیریت تماس بگیرید.', 403);
-        }
-
-        if ((int)($user['is_master'] ?? 0) !== 1 && !empty($user['subscription_expires_at'])) {
-            $expTs = strtotime((string)$user['subscription_expires_at']);
-            if ($expTs !== false && $expTs <= time()) {
-                jsonResponse(false, null, 'مدت اعتبار اشتراک یا دسترسی حساب کاربری شما به پایان رسیده است.', 403);
-            }
         }
 
         $passwordMatches = verifyUserPassword($user, $password, $username);
@@ -269,11 +255,12 @@ if ($method === 'POST') {
         }
 
         assertLoginAccountActive($db,$user);
+        $browser=($input['sessionMode']??'')==='cookie';
         if(emailSecuritySettings()['enabled']){
             ensureEmailSecuritySchema($db);
-            if(!useTrustedDevice($db,$user))issueEmailChallenge($db,$user);
+            if(($browser&&empty($user['cookie_session_enabled']))||!useTrustedDevice($db,$user))issueEmailChallenge($db,$user,$browser);
         }
-        completeUserLogin($db,$user,$schemaFlags);
+        completeUserLogin($db,$user,$schemaFlags,$browser);
     }
 
     /**
@@ -467,6 +454,7 @@ if ($method === 'POST') {
             'isLockedBySuperAdmin' => (bool)$isLocked,
             'aiEnabled' => (bool)$aiEnabled,
         ]);
+        if(array_key_exists('accountNotice',$p))$mergedProfile['accountNotice']=validateAccountNotice($p['accountNotice']);
         if ($meMaster && array_key_exists('staffLimit', $p)) $mergedProfile['staffLimit'] = min(500, max(0, (int)$p['staffLimit']));
 
         if (isset($p['projectGrants']) && is_array($p['projectGrants'])) {
@@ -510,6 +498,7 @@ if ($method === 'POST') {
 
         if ($existing) {
             $sessionContextChanged=(string)$row['owner']!==(string)($existing['owner_admin_id']??'') || $row['role']!==$existing['role'] || $row['email']!==(string)($existing['email']??'');
+            if(((int)$row['locked']===1&&(int)($existing['is_locked']??0)===0)||((int)$row['active']===0&&(int)($existing['is_active']??1)===1))$sessionContextChanged=true;
             $sql = 'UPDATE users SET owner_admin_id = :owner, name = :n, username = :u, email = :e,
                     password_hash = :h, role = :r, phone = :ph, company_name = :c, company_address = :a,
                     subscription_plan = :pl, subscription_expires_at = :ex, is_locked = :l,
@@ -617,10 +606,16 @@ if ($method === 'POST') {
         jsonResponse(true, ['deleted' => true], 'دسترسی حساب حذف شد؛ اسناد مالی محفوظ ماند.');
     }
 
+    if($action==='logout'){
+        $me=authenticateUser(false);
+        if(!empty($me['_web_session'])){$q=$db->prepare('DELETE FROM web_sessions WHERE session_hash=:hash');$q->execute(['hash'=>$me['_web_session']]);}
+        clearWebCookie(webSessionKind());jsonResponse(true,['loggedOut'=>true]);
+    }
     if ($action === 'logout_all') {
         $me = authenticateUser(false);
         $upStmt = $db->prepare("UPDATE users SET token_version = token_version + 1 WHERE id = :id");
         $upStmt->execute(['id' => $me['id']]);
+        clearWebCookie(webSessionKind());
         logAudit($db, $me['id'], $me['name'], 'logout', 'auth', $me['id'], 'ابطال تمام نشست‌های فعال کاربر');
         jsonResponse(true, null, 'تمام نشست‌های فعال شما باطل شد. لطفاً دوباره وارد شوید.');
     }
@@ -634,7 +629,7 @@ if ($method === 'GET') {
     }
     // دریافت اطلاعات به‌روز کاربر لاگین‌شده از دیتابیس MySQL
     $user = authenticateUser(false);
-    jsonResponse(true, ['user' => formatUserPayload($user)]);
+    jsonResponse(true,['user'=>formatUserPayload($user),'csrfToken'=>isset($user['_web_session'])?webCsrf($user['_web_session']):null]);
 }
 
 jsonResponse(false,null,'روش یا عملیات پشتیبانی نمی‌شود.', in_array($method,['GET','POST','PUT','DELETE'],true)?404:405);

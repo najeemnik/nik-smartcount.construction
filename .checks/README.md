@@ -61,3 +61,14 @@ November account-removal and save regression checks:
 - `browser-workspace-save.cjs` injects a host-style non-JSON 403, verifies real server readback, binary logo upload/reuse, permission-denial preservation, retry, full reload recovery and incomplete acknowledgment rejection. Host rejection is simulated; it is not proof of a particular live WAF rule.
 
 All new tests target loopback port 8081 and the throwaway nsc_audit database with an external credentials file at `/workspace/nsc-test/accounts.json`. Never point them at production. Run suites sequentially; they intentionally mutate synthetic records and settings. `.checks` is web-denied and should not be in the deployment update ZIP.
+
+Current November runtime: PHP 8.4 image `nsc-test-php`, MariaDB 10.11 container `nsc-test-db`, network `nsc-test`, audit web `nsc-audit-web` on loopback 8081. External test runtime and synthetic credential files live under `/workspace/nsc-test`; `/workspace/nsc-preview` is a compatibility symlink. The installer helper now uses this runtime and disposable `nsc_install_audit_*` databases with a fake sendmail sink, on loopback 8082. It does not target production.
+
+Session/mobile/language changes:
+
+- Copy `session-fixtures.php` to `/run/session-fixtures.php` in the audit web container. `session-security.py` checks 44 scenarios: opaque/HttpOnly cookie sessions, one-time legacy version migration, CSRF/origin checks, logout replay, IP binding, remembered devices beyond five logins and expiry, account/company restrictions after correct credentials, separate portals, support authorization/validation, bounded notices, and lock/unlock revocation. It restores ordinary account state and disables MFA only in the audit copy afterward.
+- `browser-session-state.cjs` verifies stale-session recovery while retaining a pending financial sentinel, branded expired-account state, literal HTML notices, correct support links, actual HttpOnly browser cookies, 320/390/768px navigation, interrupted logout recovery, and install guidance. Run with MFA disabled in the audit copy.
+- `browser-language.cjs` uses a fresh browser to verify English defaults, retained user language choice, English account status and mobile install guidance. The older browser suites explicitly select Dari for their existing label assertions.
+- `email-security.py` now checks 31 cases. Remembered devices skip codes without a five-login counter; the browser/API suites force expiry to verify the 30-day boundary. The five-attempt email-code lockout remains unchanged.
+
+Do not include `.checks`, synthetic credentials, runtime overrides or local mailboxes in the deployment ZIP. Security report counts exclude browser assertions and syntax checks.

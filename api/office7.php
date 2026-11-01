@@ -48,7 +48,7 @@ $masterGateKey = $headers['X-Office7-Gate-Key'] ?? $headers['x-office7-gate-key'
 
 $currentUser = null;
 $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
-if (!empty($authHeader)) {
+if (!empty($authHeader)||isset($_COOKIE[webCookieName(webSessionKind())])) {
     $currentUser = authenticateUser(false);
 }
 
@@ -113,6 +113,7 @@ function formatOffice7UserRow(array $r, bool $hasAppProfile, bool $hasIsActive, 
         'assignedProjectIds' => $appProfile['assignedProjectIds'] ?? [],
         'appProfile' => $appProfile,
         'staffLimit' => max(0, (int)($appProfile['staffLimit'] ?? 0)),
+        'accountNotice'=>(string)($appProfile['accountNotice']??''),
         'lastLoginAt' => $r['last_login_at'] ?? null,
         'updatedAt' => $r['updated_at'] ?? null,
     ];
@@ -466,6 +467,8 @@ if ($method === 'POST') {
                 : [];
             $incomingProfile = isset($input['appProfile']) && is_array($input['appProfile']) ? $input['appProfile'] : [];
             $mergedProfile = array_merge($existingProfile, $incomingProfile);
+            if(array_key_exists('accountNotice',$input))$mergedProfile['accountNotice']=validateAccountNotice($input['accountNotice']);
+            elseif(array_key_exists('accountNotice',$incomingProfile))$mergedProfile['accountNotice']=validateAccountNotice($incomingProfile['accountNotice']);
 
             foreach (['name', 'username', 'email', 'phone', 'companyName', 'companyAddress', 'role', 'active', 'isLockedBySuperAdmin', 'aiEnabled', 'subscriptionPlan', 'subscriptionExpiresAt', 'customEnabledModules', 'permissions', 'projectGrants', 'assignedProjectIds', 'ownerAdminId'] as $k) {
                 if (array_key_exists($k, $input)) {
@@ -480,6 +483,7 @@ if ($method === 'POST') {
         $contextChanged=(array_key_exists('owner',$params) && (string)$params['owner']!==(string)($target['owner_admin_id']??''))
             || (isset($params['role']) && $params['role']!==$target['role']);
         if(isset($input['email']) && (string)$input['email']!==(string)($target['email']??''))$contextChanged=true;
+        if((isset($params['lck'])&&(int)$params['lck']===1&&(int)($target['is_locked']??0)===0)||(isset($params['act'])&&(int)$params['act']===0&&(int)($target['is_active']??1)===1))$contextChanged=true;
         if($contextChanged && $rawOrHashedPwd==='')$fields[]='token_version = token_version + 1';
 
         if (empty($fields)) {
@@ -507,8 +511,8 @@ if ($method === 'POST') {
         $userId = trim((string)($input['userId'] ?? ($input['id'] ?? '')));
         $lockStatus = !empty($input['isLocked']) || !empty($input['isLockedBySuperAdmin']) ? 1 : 0;
 
-        $stmt = $db->prepare("UPDATE users SET is_locked = :l WHERE id = :id AND is_master = 0" . ($isMasterAuthorized ? '' : ' AND owner_admin_id = :owner'));
-        $lockParams = ['l' => $lockStatus, 'id' => $userId];
+        $stmt = $db->prepare("UPDATE users SET token_version=token_version+IF(:revoke=1 AND is_locked=0,1,0),is_locked = :l WHERE id = :id AND is_master = 0" . ($isMasterAuthorized ? '' : ' AND owner_admin_id = :owner'));
+        $lockParams = ['revoke'=>$lockStatus,'l' => $lockStatus, 'id' => $userId];
         if (!$isMasterAuthorized) $lockParams['owner'] = $currentUser['id'];
         $stmt->execute($lockParams);
 

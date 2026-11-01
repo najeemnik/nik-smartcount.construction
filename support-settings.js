@@ -1,0 +1,6 @@
+(() => {
+ const el=id=>document.getElementById(id),status=message=>{el('status').textContent=message};
+ async function request(path,data){const r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:{'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined,cache:'no-store'});const b=await r.json();if(!r.ok||!b.success)throw Error(b.error||NSC_UI.t("The operation could not be completed.","عملیات انجام نشد."));return b.data}
+ window.NSC_SESSION_READY.then(async session=>{if(!session){location.replace('/office7-login.php');return}if(!session.user.isMasterSuperAdmin)throw Error(NSC_UI.t("This page is for Office Seven administrators.","این صفحه برای دفتر هفت است."));const values=await request('support.php');for(const key of ['phone','whatsapp','email'])el(key).value=values[key]||'';el('fields').disabled=false}).catch(e=>status(e.message));
+ el('support-form').onsubmit=async event=>{event.preventDefault();el('fields').disabled=true;try{await request('support.php',Object.fromEntries(['phone','whatsapp','email'].map(k=>[k,el(k).value.trim()])));status(NSC_UI.t("Support contacts saved.","راه‌های تماس ذخیره شد."))}catch(e){status(e.message)}finally{el('fields').disabled=false}};
+})();

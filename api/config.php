@@ -81,7 +81,7 @@ function sendSecurityHeaders() {
         header("Vary: Origin");
     }
     header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
-    header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-Office7-Gate-Key, X-Idempotency-Key");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-Office7-Gate-Key, X-Idempotency-Key, X-NSC-Portal, X-NSC-CSRF");
 
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
         http_response_code(200);

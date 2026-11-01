@@ -5,6 +5,7 @@ $db=Database::getConnection();ensureEmailSecuritySchema($db);
 $mode=$argv[1]??'';
 if($mode==='enable'||$mode==='disable'){
  file_put_contents('/var/www/html/api/.secrets/email.php','<?php return ["enabled"=>'.($mode==='enable'?'true':'false').',"from"=>"security@nik-smartcount.com"];');
+}else if($mode==='trust-expire'){$db->exec('UPDATE email_trusted_devices SET expires_at=NOW()-INTERVAL 1 SECOND');
 }else if($mode==='reset'){
  $db->exec('DELETE FROM email_login_challenges');$db->exec('DELETE FROM email_trusted_devices');$db->exec('DELETE FROM login_attempts');
  $db->exec('UPDATE users SET email=CONCAT(username,"@nik-smartcount.com") WHERE id IN ("preview-owner","preview-master","audit-other","audit-viewer")');

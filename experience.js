@@ -6,11 +6,21 @@
   await new Promise(r=>setTimeout(r,reduced?0:Math.max(0,650-(performance.now()-started))));
   boot.classList.add('is-leaving');await new Promise(r=>setTimeout(r,reduced?0:180));
  };
- window.NSC_SLOW_BOOT=()=>{const boot=document.getElementById('boot-message');if(!boot)return;const text=boot.querySelector('[data-boot-status]');if(text)text.textContent='ارتباط کمی طول کشید؛ اتصال اینترنت را بررسی کنید.';const retry=boot.querySelector('button');if(retry)retry.hidden=false;};
+ window.addEventListener('nsc:language',()=>{const link=document.querySelector('.nsc-install-link');if(link)link.textContent=NSC_UI.t('Install app','نصب برنامه')});
+ window.NSC_SLOW_BOOT=()=>{const boot=document.getElementById('boot-message');if(!boot)return;const text=boot.querySelector('[data-boot-status]');if(text){text.removeAttribute('data-en');text.textContent=NSC_UI.t('This is taking longer than usual. Check your internet connection.','ارتباط کمی طول کشید؛ اتصال اینترنت را بررسی کنید.');}const retry=boot.querySelector('button');if(retry)retry.hidden=false;};
  document.querySelector('[data-boot-retry]')?.addEventListener('click',()=>location.reload());
  const saved=new WeakMap();let last=null;
  const focusable='button:not([disabled]),a[href],input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]';
  function scan(){
+  const header=document.querySelector('#root header');
+  if(header&&!header.classList.contains('nsc-app-header')){
+   const row=header.querySelector('.h-11');
+   if(row&&row.children.length===2){
+    header.classList.add('nsc-app-header');row.classList.add('nsc-header-row');
+    row.children[0].classList.add('nsc-header-brand');row.children[1].classList.add('nsc-header-actions');
+    const install=document.createElement('a');install.href='/install-app.php';install.className='nsc-install-link';install.textContent=NSC_UI.t('Install app','نصب برنامه');install.setAttribute('aria-label',NSC_UI.t('How to install on your phone','رهنمای نصب برنامه در موبایل'));row.children[0].append(install);
+   }
+  }
   for(const dialog of document.querySelectorAll('dialog[open]'))dialog.classList.add('nsc-dialog');
   for(const form of document.querySelectorAll('#root form')){
    let overlay=form.parentElement;while(overlay&&overlay!==document.body&&!overlay.classList.contains('fixed'))overlay=overlay.parentElement;

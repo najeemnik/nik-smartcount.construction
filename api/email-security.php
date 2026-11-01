@@ -1,5 +1,5 @@
 <?php
-/** Email login challenge and five-use trusted devices. No code or device token is stored in clear text. */
+/** Email login challenge and IP-bound trusted devices. No code or device token is stored in clear text. */
 function emailSecuritySettings(): array {
     $path=__DIR__.'/.secrets/email.php';
     if(is_file($path) && function_exists('opcache_invalidate'))opcache_invalidate($path,true);
@@ -11,32 +11,33 @@ function ensureEmailSecuritySchema(PDO $db): void {
     // Additive and idempotent, including for existing hosts before their next login.
     $db->exec("CREATE TABLE IF NOT EXISTS email_login_challenges (
         challenge_hash CHAR(64) PRIMARY KEY,user_id VARCHAR(64) NOT NULL,token_version INT NOT NULL,
-        code_hash CHAR(64) NOT NULL,attempts TINYINT NOT NULL DEFAULT 0,ip_address VARCHAR(45) NOT NULL,
+        code_hash CHAR(64) NOT NULL,browser_mode TINYINT NOT NULL DEFAULT 0,attempts TINYINT NOT NULL DEFAULT 0,ip_address VARCHAR(45) NOT NULL,
         expires_at DATETIME NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         consumed_at DATETIME NULL,INDEX(user_id,created_at),INDEX(ip_address,created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $columns=$db->query('SHOW COLUMNS FROM email_login_challenges')->fetchAll(PDO::FETCH_COLUMN);
+    if(!in_array('browser_mode',$columns,true))$db->exec('ALTER TABLE email_login_challenges ADD COLUMN browser_mode TINYINT NOT NULL DEFAULT 0');
     $db->exec("CREATE TABLE IF NOT EXISTS email_trusted_devices (
         token_hash CHAR(64) PRIMARY KEY,user_id VARCHAR(64) NOT NULL,token_version INT NOT NULL,
-        remaining_uses TINYINT NOT NULL,expires_at DATETIME NOT NULL,
+        remaining_uses TINYINT NOT NULL DEFAULT 0,ip_hash CHAR(64) NOT NULL DEFAULT '',device_hash CHAR(64) NOT NULL DEFAULT '',expires_at DATETIME NOT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,INDEX(user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $columns=$db->query('SHOW COLUMNS FROM email_trusted_devices')->fetchAll(PDO::FETCH_COLUMN);
+    foreach(['ip_hash','device_hash']as $column)if(!in_array($column,$columns,true))$db->exec("ALTER TABLE email_trusted_devices ADD COLUMN $column CHAR(64) NOT NULL DEFAULT ''");
 }
 function assertLoginAccountActive(PDO $db, array $user): void {
-    if(!empty($user['deleted_at'])||(int)($user['is_locked']??0)===1||(int)($user['is_active']??1)!==1)jsonResponse(false,null,'حساب غیرفعال یا مسدود شده است.',403);
-    if((int)($user['is_master']??0)!==1&&!empty($user['subscription_expires_at'])&&strtotime($user['subscription_expires_at'])<=time())jsonResponse(false,null,'اعتبار حساب پایان یافته است.',403);
-    if(!empty($user['owner_admin_id'])){
-        $q=$db->prepare('SELECT * FROM users WHERE id=:id AND role="admin" AND is_master=0');$q->execute(['id'=>$user['owner_admin_id']]);
-        $owner=$q->fetch();if(!$owner)jsonResponse(false,null,'شرکت معتبر نیست.',403);
-        if((int)($owner['is_locked']??0)===1||(int)($owner['is_active']??1)!==1||(!empty($owner['subscription_expires_at'])&&strtotime($owner['subscription_expires_at'])<=time()))jsonResponse(false,null,'دسترسی شرکت غیرفعال یا منقضی شده است.',403);
-    }
+    $restriction=accountRestriction($db,$user);if($restriction)denyAccountRestriction($restriction);
 }
 function trustedDeviceCookieName(string $id): string { return '__Host-nsc_trust_'.substr(hash('sha256',$id),0,16); }
 function useTrustedDevice(PDO $db, array $user): bool {
     $token=$_COOKIE[trustedDeviceCookieName((string)$user['id'])]??'';
     if(!is_string($token)||!preg_match('/^[a-f0-9]{64}$/D',$token))return false;
-    $q=$db->prepare('UPDATE email_trusted_devices SET remaining_uses=remaining_uses-1 WHERE token_hash=:hash AND user_id=:uid AND token_version=:ver AND remaining_uses>0 AND expires_at>NOW()');
-    $q->execute(['hash'=>hash('sha256',$token),'uid'=>$user['id'],'ver'=>(int)($user['token_version']??0)]);
-    return $q->rowCount()===1;
+    $q=$db->prepare('SELECT * FROM email_trusted_devices WHERE token_hash=:hash AND user_id=:uid AND token_version=:ver AND expires_at>NOW()');
+    $params=['hash'=>hash('sha256',$token),'uid'=>$user['id'],'ver'=>(int)($user['token_version']??0)];$q->execute($params);$row=$q->fetch();
+    if($row&&hash_equals((string)$row['ip_hash'],clientNetworkHash())&&hash_equals((string)$row['device_hash'],clientDeviceHash()))return true;
+    // A changed network/browser revokes this device. Returning to the old network does not restore trust.
+    $q=$db->prepare('DELETE FROM email_trusted_devices WHERE token_hash=:hash AND user_id=:uid');$q->execute(['hash'=>$params['hash'],'uid'=>$user['id']]);
+    setcookie(trustedDeviceCookieName((string)$user['id']),'',['expires'=>1,'path'=>'/','secure'=>true,'httponly'=>true,'samesite'=>'Strict']);return false;
 }
 function usableLoginEmail(string $email): bool {
     return filter_var($email,FILTER_VALIDATE_EMAIL)!==false && !preg_match('/[\r\n]/',$email)
@@ -51,7 +52,7 @@ function sendLoginCode(string $to,string $code,?string $from=null): bool {
     // cPanel routes PHP mail through its local Exim service. Set SPF/DKIM in Email Deliverability.
     return mail($to,$subject,$body,['From'=>$from,'Content-Type'=>'text/plain; charset=UTF-8','X-Auto-Response-Suppress'=>'All']);
 }
-function issueEmailChallenge(PDO $db,array $user): void {
+function issueEmailChallenge(PDO $db,array $user,bool $browser=false): void {
     $db->exec('DELETE FROM email_login_challenges WHERE created_at<NOW()-INTERVAL 1 DAY LIMIT 1000');
     $db->exec('DELETE FROM email_trusted_devices WHERE expires_at<=NOW() LIMIT 1000');
     $email=(string)($user['email']??'');
@@ -65,8 +66,8 @@ function issueEmailChallenge(PDO $db,array $user): void {
         if((int)$q->fetchColumn()>=10)jsonResponse(false,null,'ارسال کُد زیاد تکرار شده است؛ ۱۵ دقیقه بعد تلاش کنید.',429);
         $challenge=bin2hex(random_bytes(32));$code=(string)random_int(100000,999999);
         $hash=hash('sha256',$challenge);$codeHash=hash_hmac('sha256',$hash.':'.$code,JWT_SECRET_KEY);
-        $q=$db->prepare('INSERT INTO email_login_challenges(challenge_hash,user_id,token_version,code_hash,ip_address,expires_at) VALUES(:hash,:uid,:ver,:code,:ip,NOW()+INTERVAL 5 MINUTE)');
-        $q->execute(['hash'=>$hash,'uid'=>$user['id'],'ver'=>(int)($user['token_version']??0),'code'=>$codeHash,'ip'=>$ip]);
+        $q=$db->prepare('INSERT INTO email_login_challenges(challenge_hash,user_id,token_version,code_hash,browser_mode,ip_address,expires_at) VALUES(:hash,:uid,:ver,:code,:browser,:ip,NOW()+INTERVAL 5 MINUTE)');
+        $q->execute(['hash'=>$hash,'uid'=>$user['id'],'ver'=>(int)($user['token_version']??0),'code'=>$codeHash,'browser'=>$browser?1:0,'ip'=>$ip]);
         if(!sendLoginCode($email,$code)){
             $q=$db->prepare('UPDATE email_login_challenges SET consumed_at=NOW() WHERE challenge_hash=:hash');$q->execute(['hash'=>$hash]);
             jsonResponse(false,null,'ایمیل ارسال نشد. تنظیم ارسال ایمیل هاست باید بررسی شود.',503);
@@ -90,15 +91,18 @@ function verifyEmailChallenge(PDO $db,array $input): array {
         $q=$db->prepare('SELECT * FROM users WHERE id=:uid FOR UPDATE');$q->execute(['uid'=>$row['user_id']]);$user=$q->fetch();
         if(!$user||(int)($user['token_version']??0)!==(int)$row['token_version']){$db->rollBack();jsonResponse(false,null,'حساب تغییر کرده است؛ دوباره وارد شوید.',401);}
         assertLoginAccountActive($db,$user);
+        $browser=(int)($row['browser_mode']??0)===1||($input['sessionMode']??'')==='cookie';
+        if($browser)$user=migrateCookieUser($db,$user);
         $q=$db->prepare('UPDATE email_login_challenges SET consumed_at=NOW() WHERE challenge_hash=:hash');$q->execute(['hash'=>$hash]);
         $deviceToken=null;
         if(($input['trustDevice']??false)===true){
             $deviceToken=bin2hex(random_bytes(32));
-            $q=$db->prepare('INSERT INTO email_trusted_devices(token_hash,user_id,token_version,remaining_uses,expires_at) VALUES(:hash,:uid,:ver,5,NOW()+INTERVAL 30 DAY)');
-            $q->execute(['hash'=>hash('sha256',$deviceToken),'uid'=>$user['id'],'ver'=>(int)($user['token_version']??0)]);
+            $q=$db->prepare('INSERT INTO email_trusted_devices(token_hash,user_id,token_version,remaining_uses,ip_hash,device_hash,expires_at) VALUES(:hash,:uid,:ver,0,:ip,:device,NOW()+INTERVAL 30 DAY)');
+            $q->execute(['hash'=>hash('sha256',$deviceToken),'uid'=>$user['id'],'ver'=>(int)($user['token_version']??0),'ip'=>clientNetworkHash(),'device'=>clientDeviceHash()]);
         }
         $db->commit();
         if($deviceToken!==null)setcookie(trustedDeviceCookieName((string)$user['id']),$deviceToken,['expires'=>time()+86400*30,'path'=>'/','secure'=>true,'httponly'=>true,'samesite'=>'Strict']);
+        $user['_browserLogin']=$browser;
         return $user;
     }catch(Throwable $e){if($db->inTransaction())$db->rollBack();throw $e;}
 }

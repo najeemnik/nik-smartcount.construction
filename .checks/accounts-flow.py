@@ -38,7 +38,7 @@ s,b=req('workspace.php',{'baseVersion':state['stateVersion'],'state':{'projects'
 check('owner can delete own employee',req('auth.php?action=delete_user',{'id':remove_id},owner)[0]==200)
 check('deleted employee disappears from list',remove_id not in [u['id']for u in req('office7.php?action=tenants',token=master)[1]['data']['users']])
 check('deleted employee old session is denied',req('workspace.php',token=removal_token)[0]in[401,403])
-check('deleted employee cannot log in again',req('auth.php?action=login',{'username':remove_name,'password':password})[0]==401)
+check('deleted employee cannot log in again',req('auth.php?action=login',{'username':remove_name,'password':password})[1].get('data',{}).get('code')=='ACCOUNT_REMOVED')
 check('workspace records survive user removal',any(p['id']==project['id']for p in req('workspace.php',token=owner)[1]['data']['state']['projects']))
 check('ordinary update cannot reactivate removed account',req('office7.php?action=update_tenant',{'id':remove_id,'active':True},master)[0]==404)
 check('master cannot delete itself',req('auth.php?action=delete_user',{'id':'preview-master'},master)[0]==403)

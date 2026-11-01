@@ -28,9 +28,9 @@ try:
  fixture('clear');cid,c=challenge();cid2,c2=challenge();check('new code supersedes older pending code',verify(cid,c)[0]==401);check('latest code still works',verify(cid2,c2)[0]==200)
  fixture('clear');cid,c=challenge();body,header=verify_cookie(cid,c);cookie=header.split(';',1)[0];check('trusted cookie is secure and HTTP-only','secure'in header.lower() and 'httponly'in header.lower() and 'samesite=strict'in header.lower() and header.startswith('__Host-'))
  check('trusted device still requires correct password',login_step(cookie,pwd='incorrect-password')[0]==401)
- for i in range(5):
+ for i in range(7):
   s,b=login_step(cookie);check(f'trusted device skips code on login {i+1}',s==200 and 'token'in b.get('data',{}))
- s,b=login_step(cookie);check('sixth login requires email verification again',s==200 and b['data'].get('requiresVerification')is True and 'token'not in b['data'])
+ fixture('trust-expire');s,b=login_step(cookie);check('expired trust requires email verification again',s==200 and b['data'].get('requiresVerification')is True and 'token'not in b['data'])
  fixture('clear');cid,c=challenge();fixture('version');check('password/context version invalidates pending challenge',verify(cid,c)[0]==401);check('old trusted device invalid after session reset',login_step(cookie)[1]['data'].get('requiresVerification')is True)
  fixture('clear');cid,c=challenge();fixture('lock');check('account locked after password step cannot complete login',verify(cid,c)[0]==403);fixture('unlock')
  fixture('clear');cid,c=challenge()

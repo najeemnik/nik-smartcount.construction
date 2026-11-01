@@ -5,6 +5,7 @@ async function api(path,data,token){const r=await ctx.request.fetch(base+'/api/'
 const master=(await api('auth.php?action=master_login',accounts[1])).token;const owner=(await api('auth.php?action=login',accounts[0])).token;
 async function update(permissions){await api('office7.php?action=update_tenant',{id:'preview-owner',permissions,customEnabledModules:{}},master)}
 async function open(token,path){await page.goto(base+'/login.php');await page.evaluate(({token,path})=>{localStorage.setItem(path==='office7.php'?'nsc_master_token':'nsc_auth_token',token)}, {token,path});await page.goto(base+'/'+path);if(path==='workspace.php')await page.waitForFunction(()=>window.NSC_READY===true)}
+await ctx.addInitScript(()=>{if(!localStorage.getItem('nsc_portal_lang'))localStorage.setItem('nsc_portal_lang','fa')});
 try{
  await open(master,'office7.php');await page.locator('[data-edit="preview-owner"]').click();assert.equal(await page.locator('[data-module]').count(),20);assert.equal(await page.locator('[data-perm]').count(),140);console.log('PASS Office7 exposes 20 sections and 140 action controls');await page.locator('#cancel').click();
  await open(owner,'team.php');await page.locator('#create').click();assert.equal(await page.locator('[data-perm]').count(),133);assert.equal(await page.locator('#email[type=email]').count(),1);assert.equal(await page.locator('#ai').count(),1);await page.locator('#cancel').click();console.log('PASS owner employee editor includes all delegable sections, email and AI');

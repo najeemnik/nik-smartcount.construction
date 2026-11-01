@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `subscription_plan` VARCHAR(32) NOT NULL DEFAULT 'pro',
   `subscription_expires_at` DATETIME NULL,
   `deleted_at` DATETIME NULL,
+  `cookie_session_enabled` TINYINT NOT NULL DEFAULT 0,
   `is_active` TINYINT(1) NOT NULL DEFAULT 1,
   `is_locked` TINYINT(1) NOT NULL DEFAULT 0,
   `is_master` TINYINT(1) NOT NULL DEFAULT 0,
