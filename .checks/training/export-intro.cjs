@@ -7,7 +7,7 @@ const fs=require('fs'),assert=require('assert'),root='/workspace/releases/nik-tr
  try{
   await page.setContent(fs.readFileSync(root+'/NiK_Training_2026-11-02.html','utf8'),{waitUntil:'load'});
   await page.selectOption('#route','short');await page.locator('#video').click();
-  await page.addStyleTag({content:'body.video .controls,body.video .videoExit{visibility:hidden!important}'});
+  await page.addStyleTag({content:'body.video .controls,body.video .videoExit,body.video .sub{visibility:hidden!important}'});
   for(let index=0;index<9;index++){
    await page.waitForFunction(()=>{const i=document.querySelector('#image .figure>img');return i&&i.complete&&i.naturalWidth>0});await page.waitForTimeout(120);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+1),true);
