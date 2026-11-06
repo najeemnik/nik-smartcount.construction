@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a1319">
+<title>ماشین حساب ساختمانی — NiK Smart Count</title>
+<style>
+  :root{
+    --bg:#0a1319; --panel:#101e26; --panel2:#0d222a; --line:#21404b;
+    --text:#e6f1f2; --muted:#8fb0b8; --accent:#38b6a0; --accent2:#25c08a;
+    --warn:#e6a23c; --bad:#e6635f; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:15px/1.7 "Segoe UI",Tahoma,system-ui,sans-serif;
+    -webkit-text-size-adjust:100%;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:18px 14px 60px}
+
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  h1{font-size:19px;margin:0;font-weight:700}
+  h1 small{display:block;font-weight:400;font-size:11px;color:var(--muted);margin-top:2px}
+
+  .rate-box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 11px;display:flex;align-items:center;gap:8px;font-size:12px}
+  .rate-box label{color:var(--muted);white-space:nowrap}
+  .rate-box input{width:74px;background:#07131a;border:1px solid var(--line);border-radius:7px;color:var(--text);padding:4px 7px;font:inherit;font-size:13px;text-align:center;direction:ltr}
+
+  nav{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:16px;scrollbar-width:none}
+  nav::-webkit-scrollbar{display:none}
+  nav button{
+    flex:0 0 auto;background:var(--panel);border:1px solid var(--line);color:var(--muted);
+    padding:9px 17px;border-radius:11px;font:inherit;font-size:13px;cursor:pointer;transition:.15s;white-space:nowrap;
+  }
+  nav button:hover{color:var(--text);border-color:#2d5563}
+  nav button[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:#04120f;font-weight:700}
+
+  .panel{display:none}
+  .panel.active{display:block;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:15px;margin-bottom:12px}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--accent);font-weight:700;letter-spacing:.2px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:11px}
+  .field{display:flex;flex-direction:column;gap:5px}
+  .field label{font-size:12px;color:var(--muted)}
+  .field input,.field select{
+    background:#07131a;border:1px solid var(--line);border-radius:9px;color:var(--text);
+    padding:10px 11px;font:inherit;font-size:15px;width:100%;transition:.15s;
+  }
+  .field input:focus,.field select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(56,182,160,.12)}
+  .field input[type=number]{direction:ltr;text-align:left}
+  .field select{cursor:pointer}
+  .hint{font-size:11px;color:#6f8f97;margin-top:1px}
+
+  .out{background:var(--panel2);border:1px solid var(--line);border-inline-start:3px solid var(--accent);border-radius:11px;padding:13px 15px;margin-top:13px}
+  .out .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:5px 0;font-size:13.5px}
+  .out .row+.row{border-top:1px dashed rgba(33,64,75,.7)}
+  .out .row span:first-child{color:var(--muted)}
+  .out .row b{font-size:16px;font-variant-numeric:tabular-nums;direction:ltr}
+  .out .row.big b{font-size:21px;color:var(--accent2)}
+  .out .row.sub b{font-size:12.5px;color:var(--muted);font-weight:400}
+
+  .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:9px 15px;font:inherit;font-size:12.5px;cursor:pointer;transition:.15s}
+  .btn:hover{border-color:var(--accent);color:var(--accent)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#04120f;font-weight:700}
+  .btn.primary:hover{filter:brightness(1.08)}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .chip{background:#07131a;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:5px 11px;font-size:12.5px;cursor:pointer;font-variant-numeric:tabular-nums;transition:.12s}
+  .chip:hover,.chip.on{border-color:var(--accent);color:var(--accent);background:rgba(56,182,160,.08)}
+
+  .note{font-size:11.5px;color:#6f8f97;line-height:1.75;margin-top:10px}
+  .note b{color:#8fb0b8}
+
+  .toast{position:fixed;inset-inline:0;bottom:22px;margin:auto;width:max-content;max-width:88vw;
+    background:var(--accent);color:#04120f;padding:10px 20px;border-radius:11px;font-size:13px;font-weight:700;
+    opacity:0;transform:translateY(14px);pointer-events:none;transition:.22s;z-index:99}
+  .toast.show{opacity:1;transform:none}
+
+  footer{text-align:center;color:#4d6b73;font-size:11px;margin-top:26px}
+
+  @media(max-width:420px){
+    .wrap{padding:14px 11px 50px}
+    .grid{grid-template-columns:1fr 1fr}
+    h1{font-size:17px}
+  }
+  @media print{
+    body{background:#fff;color:#000}
+    nav,.actions,.rate-box,.toast{display:none!important}
+    .card,.out{border-color:#bbb;background:#fff}
+    .panel{display:block!important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>ماشین حساب ساختمانی
+      <small>میلگرد · بتن · بلاک · هزینه</small>
+    </h1>
+    <div class="rate-box">
+      <label for="rate">نرخ دالر</label>
+      <input id="rate" type="number" value="70" min="0" step="0.01" inputmode="decimal" title="افغانی برای هر دالر">
+      <span style="color:var(--muted)">؋</span>
+    </div>
+  </header>
+
+  <nav role="tablist">
+    <button role="tab" aria-selected="true" data-tab="rebar">میلگرد</button>
+    <button role="tab" aria-selected="false" data-tab="concrete">بتن</button>
+    <button role="tab" aria-selected="false" data-tab="block">بلاک / آجر</button>
+    <button role="tab" aria-selected="false" data-tab="cost">هزینه و ارز</button>
+  </nav>
+
+  <!-- ============ میلگرد ============ -->
+  <section class="panel active" id="rebar">
+    <div class="card">
+      <h2>مشخصات میلگرد</h2>
+      <div class="field" style="margin-bottom:11px">
+        <label>قطر (میلی‌متر)</label>
+        <div class="chips" id="diaChips"></div>
+      </div>
+      <div class="grid">
+        <div class="field">
+          <label for="rDia">قطر سفارشی</label>
+          <input id="rDia" type="number" value="16" min="1" step="1" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="rLen">طول هر شاخه (متر)</label>
+          <input id="rLen" type="number" value="12" min="0.1" step="0.1" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="rCount">تعداد شاخه</label>
+          <input id="rCount" type="number" value="100" min="0" step="1" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="rPrice">قیمت هر تن</label>
+          <input id="rPrice" type="number" value="0" min="0" step="1" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="rCur">واحد قیمت</label>
+          <select id="rCur">
+            <option value="AFN">افغانی</option>
+            <option value="USD">دالر</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint">وزن واحد بر اساس نرم استاندارد فولاد: قطر² ÷ ۱۶۲ (کیلوگرم بر متر)</div>
+
+      <div class="out" id="rOut"></div>
+      <div class="actions">
+        <button class="btn" onclick="copyOut('rOut')">کپی نتیجه</button>
+        <button class="btn" onclick="window.print()">چاپ</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ بتن ============ -->
+  <section class="panel" id="concrete">
+    <div class="card">
+      <h2>ابعاد و طرح اختلاط</h2>
+      <div class="grid">
+        <div class="field">
+          <label for="cL">طول (متر)</label>
+          <input id="cL" type="number" value="5" min="0" step="0.01" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="cW">عرض (متر)</label>
+          <input id="cW" type="number" value="4" min="0" step="0.01" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="cH">ضخامت / ارتفاع (متر)</label>
+          <input id="cH" type="number" value="0.15" min="0" step="0.01" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="cMix">طرح اختلاط (سیمان:ماسه:جغل)</label>
+          <select id="cMix">
+            <option value="1:1.5:3">۱ : ۱.۵ : ۳ — مقاوم</option>
+            <option value="1:2:4" selected>۱ : ۲ : ۴ — معمول</option>
+            <option value="1:3:6">۱ : ۳ : ۶ — کم‌مقاومت</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="cWaste">ضایعات (%)</label>
+          <input id="cWaste" type="number" value="5" min="0" max="30" step="1" inputmode="decimal">
+        </div>
+      </div>
+
+      <div class="out" id="cOut"></div>
+      <div class="actions">
+        <button class="btn" onclick="copyOut('cOut')">کپی نتیجه</button>
+        <button class="btn" onclick="window.print()">چاپ</button>
+      </div>
+      <div class="note">
+        <b>روش:</b> حجم خشک = حجم مرطوب × ۱.۵۴ · هر کیسهٔ سیمان ۵۰ کیلوگرمی ≈ ۰.۰۳۴۷ متر مکعب.
+        اینها برآورد کارگاهی است، نه طرح اختلاط آزمایشگاهی.
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ بلاک ============ -->
+  <section class="panel" id="block">
+    <div class="card">
+      <h2>ابعاد دیوار و بلاک</h2>
+      <div class="grid">
+        <div class="field">
+          <label for="bL">طول دیوار (متر)</label>
+          <input id="bL" type="number" value="10" min="0" step="0.01" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="bH">ارتفاع دیوار (متر)</label>
+          <input id="bH" type="number" value="3" min="0" step="0.01" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="bOpen">کسر بازشو / در و پنجره (متر مربع)</label>
+          <input id="bOpen" type="number" value="0" min="0" step="0.01" inputmode="decimal">
+        </div>
+      </div>
+      <div class="field" style="margin-top:11px">
+        <label>اندازهٔ بلاک (سانتی‌متر)</label>
+        <div class="chips" id="blkChips"></div>
+      </div>
+      <div class="grid" style="margin-top:11px">
+        <div class="field">
+          <label for="bW">طول بلاک (سم)</label>
+          <input id="bW" type="number" value="40" min="1" step="0.5" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="bHh">ارتفاع بلاک (سم)</label>
+          <input id="bHh" type="number" value="20" min="1" step="0.5" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="bJ">ضخامت بند (سم)</label>
+          <input id="bJ" type="number" value="1" min="0" step="0.1" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="bWaste2">ضایعات (%)</label>
+          <input id="bWaste2" type="number" value="5" min="0" max="30" step="1" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="bPrice">قیمت هر بلاک</label>
+          <input id="bPrice" type="number" value="0" min="0" step="1" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="bCur">واحد قیمت</label>
+          <select id="bCur">
+            <option value="AFN">افغانی</option>
+            <option value="USD">دالر</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="out" id="bOut"></div>
+      <div class="actions">
+        <button class="btn" onclick="copyOut('bOut')">کپی نتیجه</button>
+        <button class="btn" onclick="window.print()">چاپ</button>
+      </div>
+      <div class="note"><b>فرمول:</b> تعداد در هر متر مربع = ۱ ÷ ((طول بلاک + بند) × (ارتفاع بلاک + بند))</div>
+    </div>
+  </section>
+
+  <!-- ============ هزینه ============ -->
+  <section class="panel" id="cost">
+    <div class="card">
+      <h2>تبدیل ارز</h2>
+      <div class="grid">
+        <div class="field">
+          <label for="xAmt">مبلغ</label>
+          <input id="xAmt" type="number" value="1000" min="0" step="0.01" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="xFrom">از</label>
+          <select id="xFrom"><option value="USD">دالر</option><option value="AFN">افغانی</option></select>
+        </div>
+      </div>
+      <div class="out" id="xOut"></div>
+    </div>
+
+    <div class="card">
+      <h2>جمع‌بندی سه بخش</h2>
+      <div class="out" id="sumOut"></div>
+      <div class="actions">
+        <button class="btn primary" onclick="copyOut('sumOut')">کپی جمع‌بندی</button>
+      </div>
+      <div class="note">
+        قیمت‌هایی که در بخش‌های میلگرد و بلاک وارد می‌کنی، همین‌جا جمع می‌شوند.
+        نرخ دالر در بالای صفحه قابل تغییر است.
+      </div>
+    </div>
+  </section>
+
+  <footer>NiK Smart Count · ماشین حساب ساختمانی · بدون نیاز به اینترنت</footer>
+</div>
+
+<div class="toast" id="toast">کپی شد</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- ابزارها ---------- */
+  var $ = function (id) { return document.getElementById(id); };
+  var num = function (id) { var v = parseFloat(($(id) || {}).value); return isFinite(v) ? v : 0; };
+  var nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+  var fmt = function (v) { return nf.format(Math.round((v + Number.EPSILON) * 100) / 100); };
+  var fa = function (s) { // ارقام فارسی برای نمایش زیباتر
+    return String(s).replace(/[0-9]/g, function (d) { return "۰۱۲۳۴۵۶۷۸۹"[+d]; });
+  };
+
+  function rate() { var r = num("rate"); return r > 0 ? r : 70; }
+  function toAFN(v, cur) { return cur === "USD" ? v * rate() : v; }
+
+  function row(label, value, cls) {
+    return '<div class="row ' + (cls || "") + '"><span>' + label + '</span><b>' + value + '</b></div>';
+  }
+
+  /* ---------- تب‌ها ---------- */
+  var tabs = document.querySelectorAll("nav button");
+  Array.prototype.forEach.call(tabs, function (btn) {
+    btn.addEventListener("click", function () {
+      Array.prototype.forEach.call(tabs, function (b) { b.setAttribute("aria-selected", "false"); });
+      btn.setAttribute("aria-selected", "true");
+      Array.prototype.forEach.call(document.querySelectorAll(".panel"), function (p) { p.classList.remove("active"); });
+      $(btn.dataset.tab).classList.add("active");
+    });
+  });
+
+  /* ---------- دکمه‌های قطر میلگرد ---------- */
+  var DIAS = [8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 32];
+  var diaBox = $("diaChips");
+  DIAS.forEach(function (d) {
+    var b = document.createElement("button");
+    b.className = "chip" + (d === 16 ? " on" : "");
+    b.type = "button";
+    b.textContent = fa(d);
+    b.onclick = function () {
+      $("rDia").value = d;
+      Array.prototype.forEach.call(diaBox.children, function (c) { c.classList.remove("on"); });
+      b.classList.add("on");
+      calc();
+    };
+    diaBox.appendChild(b);
+  });
+
+  /* ---------- دکمه‌های اندازهٔ بلاک ---------- */
+  var BLOCKS = [[40, 20], [40, 25], [20, 20], [30, 20], [24, 11], [22, 11]];
+  var blkBox = $("blkChips");
+  BLOCKS.forEach(function (pair, i) {
+    var b = document.createElement("button");
+    b.className = "chip" + (i === 0 ? " on" : "");
+    b.type = "button";
+    b.textContent = fa(pair[0]) + "×" + fa(pair[1]);
+    b.onclick = function () {
+      $("bW").value = pair[0];
+      $("bHh").value = pair[1];
+      Array.prototype.forEach.call(blkBox.children, function (c) { c.classList.remove("on"); });
+      b.classList.add("on");
+      calc();
+    };
+    blkBox.appendChild(b);
+  });
+
+  /* ---------- محاسبه: میلگرد ---------- */
+  function calcRebar() {
+    var d = num("rDia"), len = num("rLen"), cnt = num("rCount"), price = num("rPrice"), cur = $("rCur").value;
+
+    if (d <= 0 || len <= 0) {
+      $("rOut").innerHTML = row("خطا", "قطر و طول باید بزرگ‌تر از صفر باشند");
+      return 0;
+    }
+    var kgPerM = (d * d) / 162;
+    var perBar = kgPerM * len;
+    var totalKg = perBar * cnt;
+    var tons = totalKg / 1000;
+    var cost = price > 0 ? tons * price : 0;
+    cost = toAFN(cost, cur);
+
+    var html = "";
+    html += row("وزن هر متر", fa(fmt(kgPerM)) + " kg");
+    html += row("وزن هر شاخه (" + fa(fmt(len)) + " متر)", fa(fmt(perBar)) + " kg");
+    html += row("تعداد شاخه", fa(fmt(cnt)));
+    html += row("وزن کل", fa(fmt(totalKg)) + " kg", "big");
+    html += row("برابر با", fa(fmt(tons)) + " تن", "sub");
+    if (cost > 0) {
+      html += row("هزینهٔ کل", fa(fmt(cost)) + " ؋", "big");
+      if (cur === "USD") html += row("معادل دالر", "$" + fmt(cost / rate()), "sub");
+    }
+    $("rOut").innerHTML = html;
+    return cost;
+  }
+
+  /* ---------- محاسبه: بتن ---------- */
+  function calcConcrete() {
+    var L = num("cL"), W = num("cW"), H = num("cH"), waste = num("cWaste"), mix = $("cMix").value;
+    var parts = mix.split(":").map(Number);
+    var sum = parts[0] + parts[1] + parts[2];
+    var vol = L * W * H;
+
+    if (vol <= 0) { $("cOut").innerHTML = row("خطا", "ابعاد باید بزرگ‌تر از صفر باشند"); return; }
+
+    var wet = vol * (1 + waste / 100);
+    var dry = wet * 1.54;
+    var cementM3 = dry * (parts[0] / sum);
+    var sandM3 = dry * (parts[1] / sum);
+    var gravelM3 = dry * (parts[2] / sum);
+    var bags = cementM3 / 0.0347;
+    var cementKg = bags * 50;
+
+    var html = "";
+    html += row("حجم مرطوب", fa(fmt(vol)) + " m³", "big");
+    html += row("با ضایعات " + fa(fmt(waste)) + "٪", fa(fmt(wet)) + " m³", "sub");
+    html += row("سیمان", fa(Math.ceil(bags)) + " کیسه (≈" + fa(fmt(cementKg)) + " kg)");
+    html += row("ماسه", fa(fmt(sandM3)) + " m³");
+    html += row("جغل (بجری)", fa(fmt(gravelM3)) + " m³");
+    $("cOut").innerHTML = html;
+  }
+
+  /* ---------- محاسبه: بلاک ---------- */
+  function calcBlock() {
+    var L = num("bL"), H = num("bH"), open = num("bOpen");
+    var bw = num("bW") / 100, bh = num("bHh") / 100, j = num("bJ") / 100;
+    var waste = num("bWaste2"), price = num("bPrice"), cur = $("bCur").value;
+
+    var area = L * H - open;
+    if (area <= 0) { $("bOut").innerHTML = row("خطا", "مساحت دیوار باید مثبت باشد (بازشو را کم کنید)"); return 0; }
+    if (bw <= 0 || bh <= 0) { $("bOut").innerHTML = row("خطا", "ابعاد بلاک نامعتبر است"); return 0; }
+
+    var perM2 = 1 / ((bw + j) * (bh + j));
+    var count = Math.ceil(area * perM2 * (1 + waste / 100));
+    var cost = price > 0 ? count * price : 0;
+    cost = toAFN(cost, cur);
+
+    var html = "";
+    html += row("مساحت خالص دیوار", fa(fmt(area)) + " m²", "big");
+    html += row("بلاک در هر متر مربع", fa(fmt(perM2)) + " عدد", "sub");
+    html += row("تعداد مورد نیاز (با ضایعات)", fa(fmt(count)) + " عدد", "big");
+    if (cost > 0) {
+      html += row("هزینهٔ بلاک", fa(fmt(cost)) + " ؋");
+      if (cur === "USD") html += row("معادل دالر", "$" + fmt(cost / rate()), "sub");
+    }
+    $("bOut").innerHTML = html;
+    return cost;
+  }
+
+  /* ---------- محاسبه: ارز ---------- */
+  function calcCurrency(rebarCost, blockCost) {
+    var amt = num("xAmt"), from = $("xFrom").value;
+    var out;
+    if (from === "USD") {
+      out = row("دالر → افغانی", fa(fmt(amt)) + " $ = " + fa(fmt(amt * rate())) + " ؋", "big");
+    } else {
+      out = row("افغانی → دالر", fa(fmt(amt)) + " ؋ = $" + fmt(amt / rate()), "big");
+    }
+    out += row("نرخ فعلی", fa(fmt(rate())) + " ؋ برای هر دالر", "sub");
+    $("xOut").innerHTML = out;
+
+    var total = rebarCost + blockCost;
+    var s = "";
+    s += row("هزینهٔ میلگرد", fa(fmt(rebarCost)) + " ؋");
+    s += row("هزینهٔ بلاک", fa(fmt(blockCost)) + " ؋");
+    s += row("جمع کل", fa(fmt(total)) + " ؋", "big");
+    s += row("معادل دالر", "$" + fmt(total / rate()), "sub");
+    if (total === 0) s += row("", "قیمت واحد را در بخش‌های میلگرد یا بلاک وارد کنید", "sub");
+    $("sumOut").innerHTML = s;
+  }
+
+  /* ---------- اجرای همه ---------- */
+  function calc() {
+    var r = calcRebar();
+    calcConcrete();
+    var b = calcBlock();
+    calcCurrency(r, b);
+  }
+
+  /* ---------- کپی ---------- */
+  window.copyOut = function (id) {
+    var el = $(id);
+    if (!el) return;
+    var text = Array.prototype.map.call(el.querySelectorAll(".row"), function (r) {
+      var parts = r.querySelectorAll("span,b");
+      return parts[0].textContent.trim() + ": " + (parts[1] ? parts[1].textContent.trim() : "");
+    }).filter(function (l) { return l.length > 2; }).join("\n");
+    var done = function () {
+      var t = $("toast");
+      t.classList.add("show");
+      setTimeout(function () { t.classList.remove("show"); }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
+    } else fallback(text, done);
+  };
+  function fallback(text, done) {
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); done(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  /* ---------- اتصال رویدادها ---------- */
+  ["rate", "rDia", "rLen", "rCount", "rPrice", "rCur",
+   "cL", "cW", "cH", "cMix", "cWaste",
+   "bL", "bH", "bOpen", "bW", "bHh", "bJ", "bWaste2", "bPrice", "bCur",
+   "xAmt", "xFrom"].forEach(function (id) {
+    var el = $(id);
+    if (!el) return;
+    el.addEventListener("input", calc);
+    el.addEventListener("change", calc);
+  });
+
+  calc();
+})();
+</script>
+</body>
+</html>
