@@ -634,3 +634,22 @@ CREATE TABLE IF NOT EXISTS petty_cash_expenses (
  description TEXT NULL,
  INDEX idx_petty_tenant_project (tenant_id,project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Email password recovery. No clear-text passwords or recovery codes are stored.
+CREATE TABLE IF NOT EXISTS password_reset_challenges (
+ challenge_hash CHAR(64) PRIMARY KEY,
+ user_id VARCHAR(64) NULL,
+ identifier_hash CHAR(64) NOT NULL,
+ ip_hash CHAR(64) NOT NULL,
+ portal VARCHAR(8) NOT NULL,
+ token_version INT NOT NULL DEFAULT 0,
+ email_hash CHAR(64) NOT NULL,
+ code_hash CHAR(64) NOT NULL,
+ attempts TINYINT NOT NULL DEFAULT 0,
+ expires_at DATETIME NOT NULL,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ consumed_at DATETIME NULL,
+ INDEX(identifier_hash,created_at),
+ INDEX(ip_hash,created_at),
+ INDEX(user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

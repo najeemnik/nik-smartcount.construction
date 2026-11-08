@@ -1,0 +1,38 @@
+/* Scoped glass surfaces and a shared, readable field rhythm. */
+.nsc-dialog{background:linear-gradient(145deg,#fffffff2,#f1faf5ed)!important;backdrop-filter:blur(22px) saturate(120%);-webkit-backdrop-filter:blur(22px) saturate(120%);border:1px solid #ffffffd9!important;box-shadow:0 28px 90px #062c3238,inset 0 1px #fff!important;max-width:calc(100vw - 24px)!important}
+.nsc-dialog-header{background:linear-gradient(115deg,#e3f3ebd9,#f9fffc8c)!important}
+.nsc-dialog form{background:transparent!important;overscroll-behavior:contain;scroll-padding-block:20px 90px}
+.nsc-dialog.nsc-dialog .grid{align-items:end!important}.nsc-dialog.nsc-dialog .grid>*{min-width:0}
+.nsc-dialog.nsc-dialog .nsc-field-cell{display:flex;flex-direction:column;min-width:0}
+.nsc-dialog.nsc-dialog .nsc-field-grid>.nsc-field-cell>label{display:flex;align-items:flex-end;min-height:3.5em;line-height:1.6!important;margin-bottom:8px!important;overflow-wrap:anywhere}
+.nsc-dialog.nsc-dialog :is(input:not([type=checkbox]):not([type=radio]):not([type=file]),select,textarea){box-sizing:border-box;width:100%;height:48px;min-height:48px!important;border-radius:13px!important;background:#ffffffa8!important;border-color:#b8d5c8!important;box-shadow:inset 0 1px #fff,0 2px 8px #0c4c2d04!important;transition:border-color .16s,box-shadow .16s}
+.nsc-dialog.nsc-dialog textarea{height:auto;resize:vertical}
+.nsc-dialog.nsc-dialog input[type=date],.nsc-dialog.nsc-dialog input[type=time]{direction:ltr;min-width:0;max-width:100%}
+.nsc-dialog.nsc-dialog :is(input,select,textarea):focus{outline:2px solid #2aa27a44!important;outline-offset:2px;box-shadow:0 0 0 4px #2aa27a0a!important}
+.nsc-dialog.nsc-dialog button{touch-action:manipulation;white-space:normal}.nsc-dialog.nsc-dialog button:disabled{opacity:.5;cursor:not-allowed}
+.nsc-dialog :is(button,label,h2,h3)>svg{flex-shrink:0;max-width:32px;max-height:32px}
+.nsc-dialog.nsc-dialog .nsc-currency{display:inline-flex!important;align-items:stretch;gap:4px!important;padding:4px!important;border:1px solid #bed8cc;border-radius:14px!important;background:#dfeee680!important;min-height:48px;box-sizing:border-box;max-width:100%;margin:0!important}
+.nsc-dialog.nsc-dialog .nsc-currency>button{flex:1;min-width:70px;min-height:38px!important;padding:7px 10px!important;border-radius:10px!important;font:600 13px/1.4 system-ui,sans-serif!important;direction:ltr}
+.nsc-dialog.nsc-dialog .nsc-currency>button[aria-pressed=true]{background:#087f60!important;color:#fff!important;box-shadow:0 3px 8px #0d785229}.nsc-dialog.nsc-dialog .nsc-currency>button[aria-pressed=false]{background:transparent!important;color:inherit!important}
+.nsc-dialog.nsc-dialog select.nsc-currency-native{position:absolute!important;opacity:0!important;pointer-events:none!important;width:1px!important;height:1px!important;min-height:0!important;padding:0!important;clip-path:inset(50%)}
+.nsc-dialog.nsc-dialog select.nsc-currency-native:focus+.nsc-currency{outline:3px solid #16846966;outline-offset:2px}
+html.dark .nsc-dialog{background:linear-gradient(145deg,#162d2bf2,#132623ed)!important;border-color:#61857966!important;box-shadow:0 28px 90px #0007,inset 0 1px #b3dfcd19!important}
+html.dark .nsc-dialog-header{background:linear-gradient(115deg,#21473cdd,#17332fbb)!important}
+html.dark .nsc-dialog form{background:transparent!important}
+html.dark .nsc-dialog.nsc-dialog :is(input:not([type=checkbox]):not([type=radio]),select,textarea){background:#ffffff08!important;border-color:#71998c80!important;box-shadow:inset 0 1px #ffffff09!important}
+html.dark .nsc-dialog.nsc-dialog .nsc-currency{background:#ffffff08!important;border-color:#71998c70}
+.nsc-camera-overlay{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:12px;background:#041813d9;backdrop-filter:blur(15px);color:#ecfaf3;font:15px/1.8 Tahoma,system-ui,sans-serif}
+.nsc-camera-panel{width:min(720px,100%);max-height:94dvh;overflow:auto;border:1px solid #87bba966;border-radius:24px;background:linear-gradient(135deg,#1d3934ed,#102622f5);box-shadow:0 24px 80px #0007}
+.nsc-camera-panel header,.nsc-camera-panel footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px}.nsc-camera-panel h2{font:700 19px/1.5 inherit;margin:0}.nsc-camera-panel p{margin:8px 20px;line-height:1.9;font-size:13px}.nsc-camera-panel video{display:block;width:100%;max-height:60dvh;background:#071411;object-fit:contain}.nsc-camera-panel button{border:1px solid #729b8c;border-radius:12px;min-height:44px;padding:9px 18px;background:#ffffff0d;color:inherit;cursor:pointer;font:inherit}.nsc-camera-panel .nsc-camera-shutter{background:#0b9c73;border-color:#18b98b;font-weight:700}.nsc-camera-panel button:disabled{opacity:.45}.nsc-camera-panel button:focus-visible{outline:3px solid #84edcb;outline-offset:3px}
+@media(max-width:1024px){html body .nsc-dialog.nsc-dialog :is(input:not([type=checkbox]):not([type=radio]):not([type=file]),select,textarea){font-size:16px!important}}
+@media(max-width:600px){.nsc-dialog{width:calc(100vw - 16px)!important;max-width:calc(100vw - 16px)!important}.nsc-dialog.nsc-dialog .nsc-field-grid>.nsc-field-cell>label{min-height:0}.nsc-dialog-header h2,.nsc-dialog-header h3{font-size:17px!important;overflow-wrap:anywhere}.nsc-dialog form{padding:16px!important}.nsc-dialog.nsc-dialog .grid{gap:16px!important}.nsc-camera-panel header,.nsc-camera-panel footer{padding:12px}.nsc-camera-panel p{margin-inline:12px}}
+@media(prefers-reduced-motion:reduce){.nsc-dialog *{transition:none!important}}
+[data-testid^="supplier-card-"] button:has(>span[dir=ltr]){width:100%;gap:12px;text-align:start}
+[data-testid^="supplier-card-"] button>span[dir=ltr]{display:flex;flex-direction:column;align-items:flex-start;flex-shrink:0;line-height:1.6}
+.nsc-dialog:has(>.nsc-dialog-header){display:flex!important;flex-direction:column}.nsc-dialog>.nsc-dialog-header{order:-1;flex-shrink:0}
+/* Currency codes keep the same compact shape in all three UI languages. */
+.nsc-dialog.nsc-dialog .nsc-currency>button[data-currency]{font-size:0!important;white-space:nowrap;min-width:82px}
+.nsc-dialog.nsc-dialog .nsc-currency>button[data-currency]>span{font-size:0!important}
+.nsc-dialog.nsc-dialog .nsc-currency>button[data-currency]::after{font:600 13px/1.4 system-ui,sans-serif;white-space:nowrap;direction:ltr}
+.nsc-dialog.nsc-dialog .nsc-currency>button[data-currency=AFN]::after{content:'AFN (؋)'}
+.nsc-dialog.nsc-dialog .nsc-currency>button[data-currency=USD]::after{content:'USD ($)'}

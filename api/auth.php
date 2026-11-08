@@ -190,6 +190,12 @@ if ($method === 'POST') {
     $input = getJsonInput();
     $action = $_GET['action'] ?? ($input['action'] ?? 'login');
 
+    if(in_array($action,['request_password_reset','reset_password'],true)){
+        require_once __DIR__.'/password-reset.php';
+        if($action==='request_password_reset')requestPasswordReset($db,$input);
+        completePasswordReset($db,$input);
+    }
+
     if($action==='verify_email_code'){
         ensureEmailSecuritySchema($db);
         $user=verifyEmailChallenge($db,$input);
@@ -270,6 +276,7 @@ if ($method === 'POST') {
      * - Updating existing user profile/permissions/modules/active/lock/AI WITHOUT requiring password re-entry
      */
     if ($action === 'sync_user') {
+        require_once __DIR__.'/account-identity.php';
         $me = authenticateUser(false);
         $meMaster = ((int)($me['is_master'] ?? 0) === 1) || $me['role'] === 'master';
         $mePriv = $meMaster || $me['role'] === 'admin';
@@ -298,6 +305,9 @@ if ($method === 'POST') {
             $s->execute(['u' => $username]);
             $existing = $s->fetch() ?: null;
         }
+
+        // A new account may reuse removed login identifiers, but never an explicitly supplied old ID.
+        if(!empty($p['createOnly'])&&$existing&&!empty($existing['deleted_at'])&&$fid!==(string)$existing['id']&&canReuseRemovedIdentity($me,$existing))$existing=null;
 
         if (!empty($p['createOnly']) && $existing) { jsonResponse(false, null, 'این نام کاربری قبلاً ثبت شده است.', 409); }
 
@@ -367,10 +377,11 @@ if ($method === 'POST') {
         if($existing && !empty($existing['deleted_at']))jsonResponse(false,null,'این حساب حذف شده است؛ یک نام کاربری تازه انتخاب کنید.',409);
 
         // Email uniqueness check across OTHER rows (auto-disambiguate @sync.local placeholder emails)
-        $s = $db->prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(:e) LIMIT 1');
+        $s = $db->prepare('SELECT id,deleted_at,is_master,owner_admin_id FROM users WHERE LOWER(email) = LOWER(:e) LIMIT 1');
         $s->execute(['e' => $email]);
         $emailRow = $s->fetch();
-        if ($emailRow && (!$existing || (string)$emailRow['id'] !== (string)$existing['id'])) {
+        $reusableEmail=!$existing&&!empty($p['createOnly'])&&$emailRow&&canReuseRemovedIdentity($me,$emailRow);
+        if ($emailRow && !$reusableEmail && (!$existing || (string)$emailRow['id'] !== (string)$existing['id'])) {
             if (str_ends_with($email, '@sync.local')) {
                 $email = $username . '.' . substr(bin2hex(random_bytes(3)), 0, 6) . '@sync.local';
             } else {
@@ -467,6 +478,11 @@ if ($method === 'POST') {
             $mergedProfile['customEnabledModules'] = $p['customEnabledModules'];
         }
 
+        // New staff without an assignment must not inherit global project access.
+        if (!$existing && $role !== 'admin' && $ownerId !== null && !array_key_exists('projectGrants', $mergedProfile) && !array_key_exists('assignedProjectIds', $mergedProfile)) {
+            $mergedProfile['projectGrants'] = [];
+        }
+
         $row = [
             'id' => $existing ? $existing['id'] : ($fid !== '' ? $fid : bin2hex(random_bytes(16))),
             'owner' => $isSelf && $existing ? ($existing['owner_admin_id'] ?? null) : $ownerId,
@@ -538,8 +554,18 @@ if ($method === 'POST') {
             if ($schemaFlags['hasAiEnabled']) { $cols .= ', ai_enabled'; $vals .= ', :ai'; $args['ai'] = $row['ai']; }
             if ($schemaFlags['hasHashSalt']) { $cols .= ', hash_salt'; $vals .= ', :sa'; $args['sa'] = $row['salt']; }
             if ($schemaFlags['hasAppProfile']) { $cols .= ', app_profile_json'; $vals .= ', :pr'; $args['pr'] = $row['profile']; }
-            $s = $db->prepare("INSERT INTO users ($cols) VALUES ($vals)");
-            $s->execute($args);
+            $db->beginTransaction();
+            try {
+                if(!empty($p['createOnly'])&&!retireRemovedIdentities($db,$me,$username,$email)){
+                    $db->rollBack();jsonResponse(false,null,'این نام کاربری یا ایمیل برای یک حساب موجود محفوظ است.',409);
+                }
+                $s = $db->prepare("INSERT INTO users ($cols) VALUES ($vals)");
+                $s->execute($args);$db->commit();
+            }catch(Throwable $e){
+                if($db->inTransaction())$db->rollBack();
+                if($e instanceof PDOException&&$e->getCode()==='23000')jsonResponse(false,null,'این نام کاربری یا ایمیل قبلاً ثبت شده است.',409);
+                throw $e;
+            }
             logAudit($db, $me['id'], $me['name'], 'create', 'user_sync', $row['id'], 'User pushed from device: ' . $username);
         }
 

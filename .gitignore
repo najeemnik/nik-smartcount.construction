@@ -14,3 +14,12 @@
 node_modules/
 /.checks/*results.json
 /.checks/__pycache__/
+
+# Local handoff/test artifacts and private account fixtures
+/artifacts/
+/backups/
+/test-results/
+/playwright-report/
+/accounts.json
+/workflow-account.json
+*.zip

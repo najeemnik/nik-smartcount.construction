@@ -1,0 +1,18 @@
+function nscSupplierAccount(supplier, data) {
+ const norm=x=>String(x||'').trim().toLowerCase(), name=norm(supplier.name), matches=e=>e.projectId===data.projectId&&(e.supplierId===supplier.id||e.partyId===supplier.id||e.recipientId===supplier.id||norm(e.supplierName||e.partyName||e.recipientName)===name);
+ const financial=Wd(data), rows=[];
+ for(const row of financial.steelReport.rows.filter(e=>!e.isCancelled&&matches(e.record))) rows.push({id:row.id,date:row.date,type:'purchase',description:'Steel / سیخ‌گول '+row.size+' — '+row.brand+' — '+row.billNumber,quantity:row.weightTon,unit:'Ton',unitPrice:row.unitRateNative,nativeCurrency:row.originalCurrency,nativeAmount:row.nativeCost,exchangeRate:row.exchangeRate,reference:row.billNumber,amountUSD:row.costUSD,paidUSD:row.paidAmountUSD});
+ for(const row of financial.concreteReport.rows.filter(e=>!e.isCancelled&&matches(e.record))) rows.push({id:row.id,date:row.date,type:'purchase',description:'Concrete / کانکریت '+row.concreteGrade+' — '+row.structurePart+' — '+row.billNumber,quantity:row.volumeM3,unit:'m³',unitPrice:row.unitRateNative,nativeCurrency:row.originalCurrency,nativeAmount:row.nativeCost,exchangeRate:row.exchangeRate,reference:row.billNumber,amountUSD:row.costUSD,paidUSD:row.paidAmountUSD});
+ const payments=(data.payments||[]).filter(e=>e.projectId===data.projectId&&e.docStatus!=='draft'&&!zd(e));
+ for(const row of (data.expenses||[]).filter(e=>matches(e)&&Go(e)&&!zd(e)&&e.partyType!=='labour'&&e.partyType!=='contractor')) {
+  const rate=Number(row.exchangeRate)||data.defaultExchangeRate||70, inline=(row.currency==='AFN'?Number(row.paidAmount||0)/rate:Number(row.paidAmount||0)),linked=payments.filter(e=>e.relatedType==='expense'&&e.relatedId===row.id).reduce((a,e)=>a+Ho(e),0);
+  rows.push({id:row.id,date:row.date,type:'purchase',description:row.item||row.description||row.category,quantity:row.quantity,unit:row.unit,unitPrice:row.unitPrice,exchangeRate:rate,nativeCurrency:row.currency||'USD',nativeAmount:row.currency==='AFN'?(row.amountInAFN??row.amount):row.amount,reference:row.invoiceNumber||row.billNumber||row.id,amountUSD:Bo(row),paidUSD:Z(Math.max(inline,linked))});
+ }
+ const ledger=[];for(const row of rows){ledger.push(row);if(row.paidUSD>0)ledger.push({...row,id:row.id+'-settled',type:'payment',description:'Paid on bill / پرداخت بل '+row.reference,quantity:void 0,unit:void 0,amountUSD:row.paidUSD,nativeAmount:row.nativeCurrency==='AFN'?Math.round(row.paidUSD*(row.exchangeRate||data.defaultExchangeRate||70)):row.paidUSD})}
+ // Direct supplier vouchers are independent of payments already linked to individual bills.
+ const direct=payments.filter(e=>e.relatedType==='supplier'&&matches(e));for(const row of direct)ledger.push({id:row.id,date:row.date,type:'payment',description:row.description||row.notes||'Payment / پرداخت',nativeCurrency:row.currency||'USD',nativeAmount:row.amount,reference:row.receiptNumber||row.id,amountUSD:Ho(row)});
+ ledger.sort((a,b)=>String(a.date).localeCompare(String(b.date)));let running=0;for(const row of ledger){running=Z(running+(row.type==='purchase'?row.amountUSD:-row.amountUSD));row.balance=running}
+ const total=Z(rows.reduce((a,e)=>a+e.amountUSD,0)),paid=Z(rows.reduce((a,e)=>a+e.paidUSD,0)+direct.reduce((a,e)=>a+Ho(e),0));
+ return{totalSuppliedUSD:total,totalPaidUSD:paid,debtUSD:Math.max(0,Z(total-paid)),billsCount:rows.length,paymentsCount:ledger.filter(e=>e.type==='payment').length,ledger};
+}
+function nscDefaultRateUnit(supplier,rates){if(rates.length)return rates[0].unit;const name=String(supplier.materialsSupplied||supplier.category||'').toLowerCase();return /steel|rebar|سیخ|فولاد/.test(name)?'Ton':/concrete|کانکریت|کانکریټ/.test(name)?'m3':/cement|سمنت|سیمان/.test(name)?'bag':'piece'}

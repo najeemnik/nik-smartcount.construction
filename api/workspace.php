@@ -2,6 +2,7 @@
 /** Canonical persistence bridge for the preserved construction client. */
 require_once __DIR__ . '/db.php';
 require_once __DIR__.'/workspace-files.php';
+require_once __DIR__.'/workspace-validation.php';
 sendSecurityHeaders();
 $user = authenticateUser();
 $db = Database::getConnection();
@@ -25,8 +26,7 @@ function workspaceRows($value, string $key, string $module, array $u): array {
  if (in_array($key,['fileManagerPolicy','appSettings','rebarSpecMemory'],true)) return canAccessModule($u,$module,'view') ? $value : [];
  return array_values(array_filter($value, function ($row) use ($key, $module, $u) {
   if (!is_array($row)) return false;
-  $pid = (string)($key === 'projects' ? ($row['id'] ?? '') : ($row['projectId'] ?? $row['project_id'] ?? ''));
-  return canAccessModule($u, $module, 'view', $pid !== '' ? $pid : null);
+  return workspaceRecordAllowed($u,$module,'view',$key,$row);
  }));
 }
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -66,7 +66,7 @@ if ($method === 'POST') {
   foreach ($value as $row) {
    if (!is_array($row)) continue;
    $pid=(string)($key==='projects'?($row['id']??''):($row['projectId']??$row['project_id']??''));
-   if ($pid!=='' && !workspaceAllowed($user,$map[$key],'view',$pid)) jsonResponse(false,null,'اجازهٔ تغییر پروژه را ندارید.',403);
+   if (!workspaceRecordAllowed($user,$map[$key],'view',$key,$row)) jsonResponse(false,null,'اجازهٔ تغییر پروژه را ندارید.',403);
   }
  }
  $db->beginTransaction();
@@ -89,22 +89,28 @@ if ($method === 'POST') {
     if(isset($before[$id])) {
      $previous=$before[$id];
      $previousPid=(string)($key==='projects'?($previous['id']??''):($previous['projectId']??$previous['project_id']??''));
-     if(!canAccessModule($user,$module,'edit',$previousPid!==''?$previousPid:null)){$db->rollBack();jsonResponse(false,null,'صلاحیت ویرایش پروژهٔ قبلی را ندارید.',403);}
+     if(!workspaceRecordAllowed($user,$module,'edit',$key,$previous)){$db->rollBack();jsonResponse(false,null,'صلاحیت ویرایش پروژهٔ قبلی را ندارید.',403);}
     }
     $pid=(string)($key==='projects'?($r['id']??''):($r['projectId']??$r['project_id']??''));
     $previousStatus=isset($before[$id])?(string)($before[$id]['docStatus']??''):'';
     $nextStatus=(string)($r['docStatus']??'');
     $approvalChange=(in_array($previousStatus,['posted','reversed'],true) || ($previousStatus!==$nextStatus && (in_array($previousStatus,['posted','reversed'],true)||in_array($nextStatus,['posted','reversed'],true))));
+    $previousApproval=isset($before[$id])?(string)($before[$id]['approvalStatus']??''):'';
+    $nextApproval=(string)($r['approvalStatus']??'');
+    if($previousApproval!==$nextApproval && (in_array($previousApproval,['approved','rejected'],true)||in_array($nextApproval,['approved','rejected'],true)))$approvalChange=true;
+    foreach(['approvedBy','approvedAt','postedBy','postedAt'] as $approvalField)if(($before[$id][$approvalField]??null)!==($r[$approvalField]??null))$approvalChange=true;
+    if(!empty($r['reversalOf']))$approvalChange=true;
     if($key==='interProjectTransfers' && (string)($before[$id]['status']??'')!==(string)($r['status']??'') && in_array($r['status']??'',['approved','rejected'],true))$approvalChange=true;
-    if($approvalChange && !canAccessModule($user,$module,'approve',$pid!==''?$pid:null)){$db->rollBack();jsonResponse(false,null,'صلاحیت تأیید یا بازگشایی سند را ندارید.',403);}
-    if(!canAccessModule($user,$module,$action,$pid!==''?$pid:null)){$db->rollBack();jsonResponse(false,null,'صلاحیت این عملیات را ندارید: '.$action,403);}
+    if($approvalChange && !workspaceRecordAllowed($user,$module,'approve',$key,$r)){$db->rollBack();jsonResponse(false,null,'صلاحیت تأیید یا بازگشایی سند را ندارید.',403);}
+    if(!workspaceRecordAllowed($user,$module,$action,$key,$r)){$db->rollBack();jsonResponse(false,null,'صلاحیت این عملیات را ندارید: '.$action,403);}
+    validateWorkspaceFinancialRow($key,$r,$after);
    }
    foreach($before as $id=>$r){
     if(isset($after[$id]))continue;
     $pid=(string)($key==='projects'?($r['id']??''):($r['projectId']??$r['project_id']??''));
-    if(!workspaceAllowed($user,$module,'view',$pid!==''?$pid:null))continue;
-    if(in_array($r['docStatus']??'',['posted','reversed'],true) && !canAccessModule($user,$module,'approve',$pid!==''?$pid:null)){$db->rollBack();jsonResponse(false,null,'حذف سند نهایی صلاحیت تأیید می‌خواهد.',403);}
-    if(!workspaceAllowed($user,$module,'delete',$pid!==''?$pid:null)){$db->rollBack();jsonResponse(false,null,'صلاحیت حذف ندارید.',403);}
+    if(!workspaceRecordAllowed($user,$module,'view',$key,$r))continue;
+    if(in_array($r['docStatus']??'',['posted','reversed'],true) && !workspaceRecordAllowed($user,$module,'approve',$key,$r)){$db->rollBack();jsonResponse(false,null,'حذف سند نهایی صلاحیت تأیید می‌خواهد.',403);}
+    if(!workspaceRecordAllowed($user,$module,'delete',$key,$r)){$db->rollBack();jsonResponse(false,null,'صلاحیت حذف ندارید.',403);}
    }
   }
   // Idempotent retry: identical data acknowledges the current version even after a lost response.
@@ -113,7 +119,7 @@ if ($method === 'POST') {
   if ((int)$row['state_version']!==$input['baseVersion']) {$db->rollBack();jsonResponse(false,['stateVersion'=>(int)$row['state_version']],'نسخهٔ سرور تغییر کرده است. قبل از ذخیره، تعارض را حل کنید.',409);}
   foreach ($input['state'] as $key=>$value) {
    if (!in_array($key,['appSettings','fileManagerPolicy','rebarSpecMemory'],true)) {
-    $hidden=array_values(array_filter($current[$key]??[],function($r)use($key,$map,$user){if(!is_array($r))return false;$pid=(string)($key==='projects'?($r['id']??''):($r['projectId']??$r['project_id']??''));return !canAccessModule($user,$map[$key],'view',$pid!==''?$pid:null);}));
+    $hidden=array_values(array_filter($current[$key]??[],function($r)use($key,$map,$user){if(!is_array($r))return false;$pid=(string)($key==='projects'?($r['id']??''):($r['projectId']??$r['project_id']??''));return !workspaceRecordAllowed($user,$map[$key],'view',$key,$r);}));
     $hiddenIds=[];foreach($hidden as $r)if(isset($r['id']))$hiddenIds[(string)$r['id']]=true;
     foreach($value as $r)if(is_array($r)&&isset($hiddenIds[(string)($r['id']??'')])){$db->rollBack();jsonResponse(false,null,'شناسهٔ رکورد خارج از صلاحیت است.',403);}
     $value=array_merge($hidden,$value);
@@ -125,7 +131,8 @@ if ($method === 'POST') {
   $s->execute(['state'=>$json,'uid'=>$user['id'],'tid'=>$tenant]);$version=(int)$row['state_version']+1;
   $db->commit();logAudit($db,$user['id'],$user['name'],'save','workspace',$tenant,'Workspace version '.$version.'; sections: '.implode(',',array_keys($input['state'])));
   jsonResponse(true,['stateVersion'=>$version,'savedAt'=>gmdate('c')]);
- } catch (Throwable $e) {if($db->inTransaction())$db->rollBack();error_log('Workspace save failed: '.$e->getMessage());jsonResponse(false,null,'ذخیرهٔ سرور ناکام شد؛ تغییرات محلی نگهداری شده‌اند.',500);}
+ } catch (InvalidArgumentException $e) {if($db->inTransaction())$db->rollBack();jsonResponse(false,null,$e->getMessage(),400);}
+ catch (Throwable $e) {if($db->inTransaction())$db->rollBack();error_log('Workspace save failed: '.$e->getMessage());jsonResponse(false,null,'ذخیرهٔ سرور ناکام شد؛ تغییرات محلی نگهداری شده‌اند.',500);}
 }
 $s=$db->prepare('SELECT * FROM app_workspaces WHERE tenant_id=:tid');$s->execute(['tid'=>$tenant]);$row=$s->fetch();$raw=$row?json_decode($row['state_json'],true,512,JSON_THROW_ON_ERROR):[];
 $state=[];$writable=[];

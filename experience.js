@@ -30,10 +30,18 @@
    if(!saved.has(frame)){
     saved.set(frame,document.activeElement);frame.classList.add('nsc-dialog');frame.setAttribute('role','dialog');frame.setAttribute('aria-modal','true');
     const heading=frame.querySelector('h2,h3');if(heading){heading.id||=crypto.randomUUID();frame.setAttribute('aria-labelledby',heading.id)}else frame.setAttribute('aria-label','فورم معلومات');
-    const header=frame.firstElementChild;if(header&&header!==form)header.classList.add('nsc-dialog-header');
+    const header=[...frame.children].find(node=>node!==form&&node.querySelector('h2,h3'));if(header)header.classList.add('nsc-dialog-header');
     requestAnimationFrame(()=>{if(frame.isConnected&&!frame.contains(document.activeElement))frame.querySelector(focusable)?.focus()});
    }
    last=frame;
+  }
+  // Some existing editors use buttons rather than a native form (for example budgets).
+  for(const overlay of document.querySelectorAll('#root div.fixed.inset-0')){
+   const frame=[...overlay.children].find(node=>node.querySelector('h2,h3')&&node.querySelector('input:not([type=file]):not([type=hidden]),select,textarea'));
+   if(!frame||frame.querySelector('canvas,video')||saved.has(frame))continue;
+   saved.set(frame,document.activeElement);frame.classList.add('nsc-dialog');frame.setAttribute('role','dialog');frame.setAttribute('aria-modal','true');
+   const heading=frame.querySelector('h2,h3');heading.id||=crypto.randomUUID();frame.setAttribute('aria-labelledby',heading.id);
+   const header=[...frame.children].find(node=>node.querySelector('h2,h3')&&!node.querySelector('input,select,textarea'));if(header)header.classList.add('nsc-dialog-header');last=frame;
   }
   if(last&&!last.isConnected){const target=saved.get(last);if(target?.isConnected)target.focus();last=null;}
  }

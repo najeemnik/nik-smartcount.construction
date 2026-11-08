@@ -27,9 +27,13 @@ AddDefaultCharset UTF-8
     Header set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
-<FilesMatch "^(config(\.example)?|db|credentials|account-status|web-session|workspace-files|mail-configuration|email-security|permission-catalog|permissions|validation|report-data)\.php$">
+<FilesMatch "^(config(\.example)?|db|credentials|account-status|web-session|workspace-files|mail-configuration|email-security|account-identity|password-reset|permission-catalog|permissions|validation|report-data)\.php$">
     Require all denied
 </FilesMatch>
 <IfModule mod_setenvif.c>
     SetEnvIf Authorization "(.+)" HTTP_AUTHORIZATION=$1
 </IfModule>
+
+<Files "workspace-validation.php">
+    Require all denied
+</Files>

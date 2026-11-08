@@ -35,7 +35,7 @@
   const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((v,k)=>headers.set(k,v));
   const auth=headers.get('Authorization');if(auth==='Bearer cookie-session')headers.delete('Authorization');
   const method=(init.method||(input instanceof Request?input.method:'GET')).toUpperCase(),action=url.searchParams.get('action');
-  const publicAuth=url.pathname==='/api/auth.php'&&['login','master_login','verify_email_code'].includes(action);
+  const publicAuth=url.pathname==='/api/auth.php'&&['login','master_login','verify_email_code','request_password_reset','reset_password'].includes(action);
   let body=init.body;
   if(publicAuth)await window.NSC_SESSION_READY;
   if(publicAuth&&typeof body==='string'){try{body=JSON.stringify({...JSON.parse(body),sessionMode:'cookie'})}catch{}}

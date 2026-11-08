@@ -72,3 +72,41 @@ Session/mobile/language changes:
 - `email-security.py` now checks 31 cases. Remembered devices skip codes without a five-login counter; the browser/API suites force expiry to verify the 30-day boundary. The five-attempt email-code lockout remains unchanged.
 
 Do not include `.checks`, synthetic credentials, runtime overrides or local mailboxes in the deployment ZIP. Security report counts exclude browser assertions and syntax checks.
+
+November 2 workflow and per-project employee access:
+
+- `patch-client-workflow.cjs` applies the follow-up adapter to the preserved `0c5a360` bundle, parses the result with acorn and refuses an already-patched bundle. It exposes the displayed project ID, keeps selection consistent, fixes folder navigation/focus, corrects native AFN creditor balances and keeps payroll settlement in its own ledger. The original frontend source is still unavailable.
+- `workflow-seed.php` refuses every DB name except `nsc_audit`. It resets only the dedicated synthetic `workflow-owner` workspace and its two fixture users; do not reuse these identities for other tests.
+- Run `python3 .checks/workflow-run.py` after the ordinary audit schema/accounts and local fake mail sink are prepared. It uses the external Playwright runtime and `/workspace/nsc-test/accounts.json`; it writes only an external synthetic `workflow-account.json`, never credentials in the checkout. Browser tests guard the audit database before work.
+- The seven sequential browser workflows cover real 100/75/25 bill entry/settlement, 2000/1500/500 AFN payroll, folder/subfolder/Enter/focus/duplicate-name handling, actual file upload and readback after reload, distinct rights in two assigned projects, client control visibility when switching projects, direct server denial and cross-currency settlement. The fixture includes two SQL projects for the legacy payroll side call and two snapshot projects for the actual client.
+- Screenshots are educational data only and go to `/workspace/output/guide/screenshots`; the test logs go to `/workspace/nsc-test/results`. Tests intentionally mutate synthetic financial records. The driver disables MFA in the audit copy only; it must never run against production.
+- `browser-permissions.cjs` now checks explicit project selection and seven actions per section per project in the owner's employee editor, including the viewer ceiling.
+
+Deployment update includes only `nsc-accounting-r3.js.gz`, `workspace.php`, `workspace-permissions.js`, `team.php` and the new `team-projects.js`. Never upload these test fixtures, external account files or audit mail overrides.
+
+November 3 password recovery:
+
+- `api/password-reset.php` owns recovery-only challenges, separate from login MFA. The same public recovery actions support `portal=user` and `portal=master`, with no automatic session after reset. Account existence and the registered email are not disclosed.
+- Copy `.checks/reset-fixtures.php` to `/run/reset-fixtures.php` in the isolated audit container; it refuses every DB name except `nsc_audit`. It creates/restores only `reset-test-user` and `reset-test-master`, but clears recovery rate-limit fixtures in the throwaway audit DB.
+- Run `python3 .checks/password-reset.py`, then `node .checks/browser-password-reset.cjs` sequentially with the existing external credentials and fake local mail sink. The suites restore synthetic account passwords and disable MFA only in the audit copy afterward.
+- Cases include recovery for both portals, registered-email lookup, generic unknown/wrong-portal/deleted account responses, mail failure, hashed codes, expiry, five failed guesses, resend/account/IP throttles, code replay and concurrent completion, changed account context, old password/session/device revocation and retained normal login MFA.
+- Browser coverage includes Dari and English, 390px mobile layout, resend countdown using a test clock, confirmation mismatch, invalid code, successful reset and normal MFA sign-in to each portal. Codes and passwords must never be saved in browser Storage or shipped in update ZIPs.
+
+November 4 verification presentation:
+
+- `browser-code-design.cjs` exercises the actual login page and shared verification UI with a controlled verification callback: desktop/mobile, Dari/English, six decorative cells backed by one accessible input, Persian-digit normalization, spaced paste, cursor editing, error and pending feedback, reduced motion and Escape.
+- Run it before `browser-password-reset.cjs` and `browser-email.cjs`, sequentially. The latter two still use the guarded audit DB and fake mail sink for real authentication/recovery flows. Design previews contain only synthetic data and are saved outside the checkout in `/workspace/output/code-design`.
+- Deploy `code-input.css` and `code-input.js` with both login PHP entry points and updated `login-email.js` / `password-reset.js`; the updated asset URLs refresh browser caches.
+
+Emerald login layout (November 4):
+
+- `browser-login-design.cjs` checks the enhanced login pages at 1440/768/390/320px in Dari/English, native input labels/autocomplete, exactly one login form/recovery control, password visibility, language rerender, recovery cancellation and reduced motion. The screenshots use no real account details.
+- Run `browser-password-reset.cjs` and `browser-email.cjs` sequentially afterward against the existing isolated audit/fake-mail runtime to verify the existing authentication handlers still complete real sign-ins from the new layout.
+- `login-design.js` preserves and moves the existing form DOM nodes; it adds no separate authentication or storage path. `login-design.css` is scoped to the public login-page body. Ship both new assets with login.php and office7-login.php.
+
+Removed identity reuse (November 6):
+
+- `reused-identities.py` uses only loopback and the guarded audit fixture. Copy `reused-identities-inspect.php` to `/run/reused-identities-inspect.php` in the audit container. It checks explicit new-account reuse of removed identifiers, new IDs and workspace isolation, preservation of historical data/identity, active duplicate protection, owner scope, stale sync rejection, recovery of the fresh account and concurrent reuse.
+- `browser-reused-identities.cjs` covers the real Office7 create/delete/recreate form and the new owner's forgot-password and MFA sign-in. Use the existing fake mail sink; the suite enables MFA only in the audit copy and disables it afterward.
+- Existing `accounts-flow.py` requires MFA enabled and the fake sink; run it sequentially and restore the audit mail setting afterward. `password-reset.py` covers the unchanged recovery behavior and restores its synthetic fixture users.
+- `api/account-identity.php` is private/web-denied. Only explicit `createOnly` requests may retire identifiers, after normal authorization and validation. The retirement and INSERT share one DB transaction; historical rows, workspaces and IDs are retained.

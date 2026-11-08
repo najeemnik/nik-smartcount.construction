@@ -8,7 +8,7 @@ function permissionData($value): array {
 function hasProjectRestrictions(array $user): bool {
     if ((int)($user['is_master'] ?? 0) === 1 || ($user['role'] ?? '') === 'admin') return false;
     $profile = permissionData($user['app_profile_json'] ?? []);
-    return !empty($profile['projectGrants']) || !empty($profile['assignedProjectIds']);
+    return array_key_exists('projectGrants', $profile) || array_key_exists('assignedProjectIds', $profile);
 }
 function canAccessModule(array $user, string $module, string $action = 'view', ?string $projectId = null, bool $moduleOnly = false): bool {
     if ((int)($user['is_locked'] ?? 0) === 1 || (int)($user['is_active'] ?? 1) !== 1) return false;
@@ -34,6 +34,8 @@ function canAccessModule(array $user, string $module, string $action = 'view', ?
     }
     if ($role === 'admin') return true;
     $profile = permissionData($user['app_profile_json'] ?? []);
+    if (array_key_exists('projectGrants', $profile) && (!is_array($profile['projectGrants']) || !$profile['projectGrants'])) return false;
+    if (array_key_exists('assignedProjectIds', $profile) && (!is_array($profile['assignedProjectIds']) || (!$profile['assignedProjectIds'] && empty($profile['projectGrants'])))) return false;
     $assigned = $profile['assignedProjectIds'] ?? [];
     if (is_array($assigned) && $assigned && !$moduleOnly) {
         if (!in_array('*', $assigned, true) && ($projectId === null || !in_array($projectId, $assigned, true))) return false;
@@ -67,6 +69,8 @@ function canAccessProject(array $user, ?string $projectId): bool {
     if(!hasProjectRestrictions($user))return true;
     if($projectId===null || $projectId==='')return false;
     $profile=permissionData($user['app_profile_json']??[]);
+    if(array_key_exists('projectGrants',$profile)&&(!is_array($profile['projectGrants'])||!$profile['projectGrants']))return false;
+    if(array_key_exists('assignedProjectIds',$profile)&&(!is_array($profile['assignedProjectIds'])||(!$profile['assignedProjectIds']&&empty($profile['projectGrants']))))return false;
     $assigned=$profile['assignedProjectIds']??[];
     if(!is_array($assigned))return false;
     if($assigned&&!in_array('*',$assigned,true)&&!in_array($projectId,$assigned,true))return false;
