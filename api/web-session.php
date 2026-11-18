@@ -6,7 +6,7 @@ function clientNetworkHash(): string {
 function clientDeviceHash(): string {return hash('sha256',(string)($_SERVER['HTTP_USER_AGENT']??''));}
 function webSessionKind(bool $master=false): string {return $master||($_SERVER['HTTP_X_NSC_PORTAL']??'')==='master'?'master':'user';}
 function webCookieName(string $kind): string {return $kind==='master'?'__Host-nsc_master_session':'__Host-nsc_session';}
-function clearWebCookie(string $kind): void {setcookie(webCookieName($kind),'',['expires'=>1,'path'=>'/','secure'=>true,'httponly'=>true,'samesite'=>'Strict']);}
+function clearWebCookie(string $kind): void {setcookie(webCookieName($kind),'',['expires'=>1,'path'=>'/','secure'=>nscCookieSecure(),'httponly'=>true,'samesite'=>'Strict']);}
 function ensureWebSessionSchema(PDO $db): void {
     $db->exec("CREATE TABLE IF NOT EXISTS web_sessions (session_hash CHAR(64) PRIMARY KEY,user_id VARCHAR(64) NOT NULL,token_version INT NOT NULL,email_verified TINYINT NOT NULL DEFAULT 0,network_hash CHAR(64) NOT NULL DEFAULT '',expires_at DATETIME NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,INDEX(user_id),INDEX(expires_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
@@ -22,7 +22,9 @@ function issueWebSession(PDO $db,array $user,bool $emailVerified): array {
     if(!in_array('network_hash',$columns,true))$db->exec("ALTER TABLE web_sessions ADD COLUMN network_hash CHAR(64) NOT NULL DEFAULT ''");
     $secret=bin2hex(random_bytes(32));$hash=hash('sha256',$secret);$kind=(int)$user['is_master']===1?'master':'user';
     $q=$db->prepare('INSERT INTO web_sessions(session_hash,user_id,token_version,email_verified,network_hash,expires_at) VALUES(:hash,:id,:version,:verified,:network,NOW()+INTERVAL 30 DAY)');$q->execute(['hash'=>$hash,'id'=>$user['id'],'version'=>(int)($user['token_version']??0),'verified'=>$emailVerified?1:0,'network'=>clientNetworkHash()]);
-    setcookie(webCookieName($kind),$secret,['expires'=>time()+86400*30,'path'=>'/','secure'=>true,'httponly'=>true,'samesite'=>'Strict']);
+    // Offline/LAN: a Secure cookie is rejected over plain http://, which made every
+    // LAN login silently fail. nscCookieSecure() is true on the public HTTPS host.
+    setcookie(webCookieName($kind),$secret,['expires'=>time()+86400*30,'path'=>'/','secure'=>nscCookieSecure(),'httponly'=>true,'samesite'=>'Strict']);
     return ['csrfToken'=>webCsrf($hash),'sessionKind'=>$kind];
 }
 function readWebSession(PDO $db,string $kind): ?array {

@@ -4,6 +4,7 @@
 !/api/.secrets/email.example.php
 !/api/.secrets/schema.sql
 !/api/.secrets/create-install-key.php
+!/api/.secrets/offline.example.php
 /uploads/*
 !/uploads/.htaccess
 /api/uploads/*
@@ -14,3 +15,6 @@
 node_modules/
 /.checks/*results.json
 /.checks/__pycache__/
+
+# Local preview harness for this branch (never deployed)
+/.arena-preview/

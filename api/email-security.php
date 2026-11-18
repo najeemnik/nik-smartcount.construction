@@ -37,7 +37,7 @@ function useTrustedDevice(PDO $db, array $user): bool {
     if($row&&hash_equals((string)$row['ip_hash'],clientNetworkHash())&&hash_equals((string)$row['device_hash'],clientDeviceHash()))return true;
     // A changed network/browser revokes this device. Returning to the old network does not restore trust.
     $q=$db->prepare('DELETE FROM email_trusted_devices WHERE token_hash=:hash AND user_id=:uid');$q->execute(['hash'=>$params['hash'],'uid'=>$user['id']]);
-    setcookie(trustedDeviceCookieName((string)$user['id']),'',['expires'=>1,'path'=>'/','secure'=>true,'httponly'=>true,'samesite'=>'Strict']);return false;
+    setcookie(trustedDeviceCookieName((string)$user['id']),'',['expires'=>1,'path'=>'/','secure'=>nscCookieSecure(),'httponly'=>true,'samesite'=>'Strict']);return false;
 }
 function usableLoginEmail(string $email): bool {
     return filter_var($email,FILTER_VALIDATE_EMAIL)!==false && !preg_match('/[\r\n]/',$email)
@@ -101,7 +101,7 @@ function verifyEmailChallenge(PDO $db,array $input): array {
             $q->execute(['hash'=>hash('sha256',$deviceToken),'uid'=>$user['id'],'ver'=>(int)($user['token_version']??0),'ip'=>clientNetworkHash(),'device'=>clientDeviceHash()]);
         }
         $db->commit();
-        if($deviceToken!==null)setcookie(trustedDeviceCookieName((string)$user['id']),$deviceToken,['expires'=>time()+86400*30,'path'=>'/','secure'=>true,'httponly'=>true,'samesite'=>'Strict']);
+        if($deviceToken!==null)setcookie(trustedDeviceCookieName((string)$user['id']),$deviceToken,['expires'=>time()+86400*30,'path'=>'/','secure'=>nscCookieSecure(),'httponly'=>true,'samesite'=>'Strict']);
         $user['_browserLogin']=$browser;
         return $user;
     }catch(Throwable $e){if($db->inTransaction())$db->rollBack();throw $e;}

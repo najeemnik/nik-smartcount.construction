@@ -1,10 +1,11 @@
 <?php
+require_once __DIR__.'/api/offline.php';
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: SAMEORIGIN');
 ?>
-<!doctype html><html lang="en" dir="ltr"><head><link rel="icon" href="/assets/favicon-32.png"><link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title data-en="Install NiK Smart Count">نصب مستقل حسابداری نیک</title><link rel="stylesheet" href="/experience.css?v=2"><style>
+<!doctype html><html lang="en" dir="ltr"><head><link rel="icon" href="/assets/favicon-32.png"><link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title data-en="Install NiK Smart Count">نصب مستقل حسابداری نیک</title><link rel="stylesheet" href="/experience.css?v=2"><script>window.NSC_OFFLINE_MODE=<?php echo nscOfflineMode()?'true':'false'; ?>;</script><style>
 *{box-sizing:border-box}body{margin:0;background:#edf4f2;color:#16382e;font:16px/1.9 Tahoma,Arial,sans-serif}main{max-width:780px;margin:35px auto;padding:24px;background:white;border-radius:16px}label{display:block;margin-top:12px}input{display:block;width:100%;padding:12px;border:1px solid #b4cfc4;border-radius:12px;font:inherit;direction:ltr}button{padding:12px 18px;margin:16px 0 0 8px;border:0;border-radius:12px;background:#08775b;color:white;font:inherit;cursor:pointer}button:disabled{opacity:.5}#result{padding:15px;background:#e5f4ec;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:18px}#result.bad{background:#fee9e9;color:#862323}h1{font-size:23px}h2{font-size:19px;border-top:1px solid #ddd;padding-top:20px}small{color:#537065}fieldset{border:0;padding:0}a{color:#076246}code{direction:ltr;display:inline-block}
 </style></head><body><script src="/ui-language.js?v=1"></script><main><div style="text-align:end"><button type="button" onclick="NSC_UI.set('en')">English</button><button type="button" onclick="NSC_UI.set('fa')">دری</button></div><img src="/assets/brand-full.webp" alt="NiK Smart Count" style="width:160px;height:auto"><h1 data-en="1. Set up NiK Smart Count">۱. نصب آسان NiK Smart Count</h1><p data-en="Three steps: connect the database, test email delivery, and create an administrator. No code edits needed.">سه قدم ساده: اتصال دیتابیس، آزمایش ایمیل، ساخت مدیر. هیچ تنظیمی در کُد لازم نیست.</p>
 <noscript><p data-en="Enable JavaScript to test the connection and complete setup.">JavaScript مرورگر غیرفعال است. برای اجرای آزمایش اتصال آن را فعال کنید.</p></noscript>
@@ -32,7 +33,7 @@ header('X-Frame-Options: SAMEORIGIN');
  el('mail-verify').onclick=function(){run(function(){return request('install.php?action=email_verify',mailData()).then(function(data){emailProof=data.proof;el('master-fields').disabled=false;show(NSC_UI.t("Email delivery verified. Create the administrator now.","دریافت ایمیل تأیید شد. اکنون مدیر اصلی را بسازید."));});});};
  for(var id of ['mail-from','master-email'])el(id).addEventListener('input',function(){emailProof='';el('master-fields').disabled=true;});
  el('master').onsubmit=function(e){e.preventDefault();run(function(){
- if(!window.isSecureContext)throw new Error(NSC_UI.t("Open the site with HTTPS to create an administrator.","برای ساخت مدیر، سایت را با HTTPS باز کنید."));
+ if(!window.isSecureContext&&!window.NSC_OFFLINE_MODE)throw new Error(NSC_UI.t("Open the site with HTTPS to create an administrator.","برای ساخت مدیر، سایت را با HTTPS باز کنید."));
  var username=el('username').value.trim().toLowerCase(),password=el('password').value;
  return request('install.php?action=complete',{key:el('key').value.trim(),from:el('mail-from').value.trim(),emailProof:emailProof,master:{username:username,name:el('name').value.trim(),email:el('master-email').value.trim(),companyName:el('company').value.trim(),password:password}}).then(function(){el('password').value='';el('master-fields').disabled=true;show(NSC_UI.t("Setup complete. Use the link below to sign in.","نصب موفق شد. از لینک پایین صفحه وارد حساب خود شوید."));});
  });};

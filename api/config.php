@@ -11,6 +11,7 @@ ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 error_reporting(E_ALL);
 date_default_timezone_set('Asia/Kabul');
+require_once __DIR__.'/offline.php';
 
 // Saved private settings take priority. Empty environment values do not erase DB names.
 $credentialFile=__DIR__.'/.secrets/database.php';
@@ -117,6 +118,14 @@ function enforceCsrfAndOriginGuard(array $allowedOrigins = []): void {
         $originPort = $originParts['port'] ?? ($originScheme === 'https' ? 443 : 80);
         $requestPort = $requestParts['port'] ?? ($scheme === 'https' ? 443 : 80);
         $sameHost = $originHost !== '' && $originHost === strtolower((string)($requestParts['host'] ?? '')) && $originScheme === $scheme && $originPort === $requestPort;
+        // Offline/LAN: a phone may open the laptop by name while the page was
+        // loaded by IP, so every LAN origin trusted for this machine is accepted.
+        if (!$sameHost && nscOfflineMode() && (nscIsLanAddress($originHost) || in_array($originHost, nscOfflineConfig()['trustedHosts'], true))) {
+            $sameHost = true;
+        }
+        if (!$sameHost && nscOfflineConfig()['allowOtherOrigins'] && nscOfflineMode()) {
+            $sameHost = true; // explicit opt-in for unusual LAN proxies
+        }
         if (!$sameHost && !in_array($origin, $allowedOrigins, true)) {
             http_response_code(403);
             echo json_encode([

@@ -256,9 +256,13 @@ if ($method === 'POST') {
 
         assertLoginAccountActive($db,$user);
         $browser=($input['sessionMode']??'')==='cookie';
-        if(emailSecuritySettings()['enabled']){
+        // Offline/LAN laptop has no mail transport: the code step is skipped only
+        // inside local mode, and every such login is written to the audit log.
+        if(emailSecuritySettings()['enabled'] && !nscOfflineSkipsEmail()){
             ensureEmailSecuritySchema($db);
             if(($browser&&empty($user['cookie_session_enabled']))||!useTrustedDevice($db,$user))issueEmailChallenge($db,$user,$browser);
+        } elseif(emailSecuritySettings()['enabled']){
+            logAudit($db,$user['id'],$user['name'],'login','auth',$user['id'],'Offline/LAN login without email code (local mode)');
         }
         completeUserLogin($db,$user,$schemaFlags,$browser);
     }
