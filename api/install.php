@@ -72,6 +72,11 @@ try {
     }
     if ($action === 'verify') { jsonResponse(true, ['verified' => true]); }
     if(in_array($action,['email_test','email_verify'],true)){
+        // A laptop has no Exim/SMTP sender, so this step cannot succeed there.
+        // In local/LAN mode it is skipped; on a real host nothing changes.
+        if (nscOfflineSkipsEmail()) {
+            jsonResponse(true, ['skipped' => true, 'reason' => 'offline-mode']);
+        }
         $input['mailAction']=$action==='email_test'?'send':'verify';
         jsonResponse(true,mailConfigurationStep($input,'install'));
     }
@@ -89,7 +94,10 @@ try {
     }
     $email = strtolower(trim((string)($m['email'] ?? '')));
     if(!usableLoginEmail($email))jsonResponse(false,null,'ایمیل واقعی مدیر اصلی الزامی است.',400);
-    mailConfigurationStep(['mailAction'=>'save','from'=>$input['from']??'','email'=>$email,'proof'=>$input['emailProof']??''],'install');
+    // Local/LAN mode has no verified sender; skip the proof instead of blocking setup.
+    if (!nscOfflineSkipsEmail()) {
+        mailConfigurationStep(['mailAction'=>'save','from'=>$input['from']??'','email'=>$email,'proof'=>$input['emailProof']??''],'install');
+    }
     $name = trim((string)($m['name'] ?? '')) ?: $username;
     $company = trim((string)($m['companyName'] ?? ''));
     if (strlen($email) > 150 || strlen($name) > 150 || strlen($company) > 200) {
@@ -107,7 +115,9 @@ try {
     $stmt = $db->prepare('INSERT INTO users (id, name, username, email, password_hash, hash_salt, role, company_name, subscription_plan, is_locked, is_active, is_master) VALUES (:id, :name, :username, :email, :hash, :salt, :role, :company, :plan, 0, 1, 1)');
     $stmt->execute(['id' => $id, 'name' => $name, 'username' => $username, 'email' => $email,
         'hash' => protectClientPasswordHash($hash), 'salt' => $salt, 'role' => 'master', 'company' => $company, 'plan' => 'lifetime']);
-    saveEmailConfiguration(trim((string)$input['from']));
+    if (!nscOfflineSkipsEmail()) {
+        saveEmailConfiguration(trim((string)$input['from']));
+    }
     $db->commit();
     // The database master row also seals setup if the filesystem write fails.
     $sealed = file_put_contents($lockFile, json_encode(['locked_at' => gmdate('c'), 'master_id' => $id]), LOCK_EX);
