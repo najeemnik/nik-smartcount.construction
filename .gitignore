@@ -18,3 +18,9 @@ node_modules/
 
 # Local preview harness for this branch (never deployed)
 /.arena-preview/
+
+# Backups — never commit (may contain real company financial data)
+*.nscbackup
+*.sql.gz
+/api/.secrets/pre-restore/
+/tmp-backups/
